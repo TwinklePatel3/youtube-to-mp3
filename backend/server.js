@@ -24,6 +24,7 @@ app.use(
 async function fetchVideoMeta(url) {
   let title = `audio-${Date.now()}`;
   let duration = 0;
+  let cover = "";
 
   // 1. Instantly grab the Title using your lightweight OEmbed fetch logic
   try {
@@ -36,6 +37,7 @@ async function fetchVideoMeta(url) {
         title = oembedData.title;
         console.log(`Title captured via OEmbed API: "${title}"`);
       }
+      if (oembedData.thumbnail_url) cover = oembedData.thumbnail_url;
     }
   } catch (error) {
     console.error(
@@ -70,7 +72,7 @@ async function fetchVideoMeta(url) {
     console.error("Failed to parse duration stream:", err.message);
   }
 
-  return { title, duration };
+  return { title, duration, cover };
 }
 
 async function getYouTubeMetadata(url) {
@@ -328,13 +330,55 @@ app.get("/api/download-file", async (req, res) => {
   const { meta, url, quality } = progressTracker[id + "-meta"];
   const tempFilename = `${meta.title}-${quality}kbps.mp3`;
   const tempFilePath = path.join(__dirname, tempFilename);
+  const tempImagePath = path.join(__dirname, `thumb-${id}.jpg`);
 
   try {
+    // 1. Download and cache the OEmbed thumbnail locally before initializing FFmpeg
+    if (meta.cover) {
+      try {
+        console.log(`Downloading cached OEmbed artwork asset: ${meta.cover}`);
+        const imgRes = await fetch(meta.cover);
+        if (imgRes.ok) {
+          const arrayBuffer = await imgRes.arrayBuffer();
+          fs.writeFileSync(tempImagePath, Buffer.from(arrayBuffer));
+          console.log("Artwork cached locally successfully.");
+        }
+      } catch (imgErr) {
+        console.error("Failed to compile thumbnail stream:", imgErr.message);
+      }
+    }
+
     const audioStream = await streamAudio(url);
 
-    ffmpeg(audioStream)
-      .audioBitrate(`${quality}k`)
-      .format("mp3")
+    // 2. Build the FFmpeg command engine
+    let ffmpegCommand = ffmpeg(audioStream);
+
+    const hasImage = fs.existsSync(tempImagePath);
+    if (hasImage) {
+      ffmpegCommand = ffmpegCommand.input(tempImagePath);
+    }
+
+    ffmpegCommand.audioBitrate(`${quality}k`).format("mp3");
+
+    // 🚀 FIXED: Combined options strings using '=' assignment to prevent space-parsing shell arguments crashes
+    if (hasImage) {
+      ffmpegCommand.outputOptions([
+        "-map",
+        "0:0", // Map input stream 0 (yt-dlp audio stream channel)
+        "-map",
+        "1:0", // Map input stream 1 (cached local image channel)
+        "-c:v",
+        "mjpeg", // Compress artwork with standard MJPEG video codec
+        "-id3v2_version",
+        "3", // Force ID3v2.3 structure for absolute Apple/iPhone compatibility
+        "-metadata:s:v:0",
+        "title=Cover", // ✅ Compact assignment: no spaces or quotes to break strings
+        "-metadata:s:v:0",
+        "comment=Artwork", // ✅ Compact description string block
+      ]);
+    }
+
+    ffmpegCommand
       .on("progress", (progress) => {
         if (meta.duration > 0 && progress.timemark) {
           const timeParts = progress.timemark.split(":");
@@ -344,12 +388,12 @@ app.get("/api/download-file", async (req, res) => {
             parseFloat(timeParts[2]);
 
           let percent = Math.round((secondsProcessed / meta.duration) * 100);
-          progressTracker[id] = Math.min(Math.max(percent, 0), 99); // Lock at 99% until file fully flushes
+          progressTracker[id] = Math.min(Math.max(percent, 0), 99);
         }
       })
       .save(tempFilePath)
       .on("end", () => {
-        console.log("FFMPEG Conversion Complete!");
+        console.log("FFMPEG Conversion Complete with Artwork Embedded!");
         progressTracker[id] = 100;
 
         res.setHeader(
@@ -361,9 +405,19 @@ app.get("/api/download-file", async (req, res) => {
         fs.createReadStream(tempFilePath)
           .pipe(res)
           .on("finish", () => {
-            // Delete temp file off hard drive after download completes
+            // 3. Cleanup Step: Delete BOTH local temp file assets off your server disk space
             fs.unlink(tempFilePath, (err) => {
-              if (err) console.error("Erasure error:", err);
+              if (err) console.error("Audio cleanup error:", err);
+
+              if (fs.existsSync(tempImagePath)) {
+                fs.unlink(tempImagePath, (imgErr) => {
+                  if (imgErr) console.error("Image cleanup error:", imgErr);
+                  else
+                    console.log(
+                      "Temporary file workspace scrubbed successfully.",
+                    );
+                });
+              }
               delete progressTracker[id + "-meta"];
             });
           });
@@ -372,10 +426,13 @@ app.get("/api/download-file", async (req, res) => {
         console.error("FFMPEG Error:", error.message);
         delete progressTracker[id];
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+        if (!res.headersSent) res.status(500).send("Audio compilation failed.");
       });
   } catch (error) {
     console.error("Streaming error:", error.message);
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
   }
 });
 
