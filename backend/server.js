@@ -364,17 +364,28 @@ app.get("/api/download-file", async (req, res) => {
     if (hasImage) {
       ffmpegCommand.outputOptions([
         "-map",
-        "0:0", // Map input stream 0 (yt-dlp audio stream channel)
+        "0:0", // Map yt-dlp audio stream
+
         "-map",
-        "1:0", // Map input stream 1 (cached local image channel)
+        "1:0", // Map cached local image
+
         "-c:v",
-        "mjpeg", // Compress artwork with standard MJPEG video codec
+        "mjpeg", // Compress artwork using MJPEG
+
+        "-vf",
+        "scale=500:500:force_original_aspect_ratio=increase,crop=500:500",
+
         "-id3v2_version",
-        "3", // Force ID3v2.3 structure for absolute Apple/iPhone compatibility
+        "3", // ID3v2.3 for Apple/iPhone compatibility
+
         "-metadata:s:v:0",
-        "title=Cover", // ✅ Compact assignment: no spaces or quotes to break strings
+        "title=Cover",
+
         "-metadata:s:v:0",
-        "comment=Artwork", // ✅ Compact description string block
+        "comment=Artwork",
+
+        "-disposition:v:0",
+        "attached_pic",
       ]);
     }
 
