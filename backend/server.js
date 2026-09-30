@@ -10,10 +10,6 @@ app.use(express.json());
 // 2. NOW IT IS SAFE TO COMPUTE PRODUCTION ENV PATHS
 const isProduction = process.env.NODE_ENV === "production";
 
-const YT_DLP_PYTHON = isProduction
-  ? path.join(__dirname, ".venv", "bin", "python")
-  : null;
-
 if (isProduction) {
   process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
 
@@ -106,14 +102,13 @@ function getYouTubeVideoId(url) {
 }
 
 function streamAudio(url) {
-  console.log("Spawning yt-dlp audio stream...");
+  console.log("Spawning system audio conversion stream...");
 
-  const spawnCommand = isProduction ? YT_DLP_PYTHON : "yt-dlp";
-
+  // Force running via python3 interpreter loop in production
+  const spawnCommand = isProduction ? "python3" : YT_DLP_PATH;
   const spawnArgs = isProduction
     ? [
-        "-m",
-        "yt_dlp",
+        YT_DLP_PATH,
         url,
         "--output",
         "-",
@@ -125,7 +120,6 @@ function streamAudio(url) {
         "3M",
         "--js-runtimes",
         "node",
-        "--verbose",
       ]
     : [
         url,
@@ -139,21 +133,14 @@ function streamAudio(url) {
         "3M",
       ];
 
-  console.log("yt-dlp command:", spawnCommand);
-  console.log("yt-dlp args:", spawnArgs);
-
   const ytDlpProcess = spawn(spawnCommand, spawnArgs);
 
   ytDlpProcess.on("error", (err) => {
-    console.error("Failed to start yt-dlp:", err.message);
+    console.error("Failed to start yt-dlp process binary:", err.message);
   });
 
   ytDlpProcess.stderr.on("data", (data) => {
-    console.log(`YT-DLP STDERR: ${data.toString()}`);
-  });
-
-  ytDlpProcess.on("close", (code) => {
-    console.log("YT-DLP EXIT CODE:", code);
+    console.log(`yt-dlp log: ${data.toString().trim()}`);
   });
 
   return ytDlpProcess.stdout;

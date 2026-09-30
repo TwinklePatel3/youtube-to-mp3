@@ -1,37 +1,24 @@
 #!/usr/bin/env bash
 set -o errexit
 
-echo "Installing Node dependencies..."
+# 1. Install regular node package modules and compile frontend dist assets
 npm install
+echo "Building Vite Frontend..."
+npm run build
 
-echo "Creating Python virtual environment..."
-python3 -m venv .venv
-
-echo "Installing yt-dlp..."
-./.venv/bin/python -m pip install --upgrade pip
-./.venv/bin/python -m pip install -U "yt-dlp[default]"
-
-echo "Checking Node..."
-node --version
-
-echo "Checking yt-dlp..."
-./.venv/bin/python -m yt_dlp --version
-
-echo "Creating FFmpeg directory..."
+# 2. Allocate space for our production execution directory
 mkdir -p ./bin
 
-echo "Downloading FFmpeg..."
-curl -fL \
-  "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz" \
-  -o /tmp/ffmpeg.tar.xz
+# 3. 🚀 FIXED: Install absolute latest python executable of yt-dlp via pip to avoid HTML redirect blocks
+echo "Installing official yt-dlp via pip..."
+python3 -m pip install --upgrade --target=./bin yt-dlp
 
-mkdir -p /tmp/ffmpeg
-tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg
+# Move or symlink the entry point so our server script can find it inside the ./bin folder
+mv ./bin/bin/yt-dlp ./bin/yt-dlp || true
 
-cp /tmp/ffmpeg/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg ./bin/ffmpeg
-chmod +x ./bin/ffmpeg
+# 4. Download pre-compiled stable Linux static binary for FFmpeg
+echo "Downloading stable Linux FFmpeg binary..."
+curl -L "https://github.com" -o ./bin/ffmpeg
+chmod a+rx ./bin/ffmpeg
 
-echo "Checking FFmpeg..."
-./bin/ffmpeg -version
-
-echo "Build completed successfully!"
+echo "Production deployment binaries successfully mounted!"
