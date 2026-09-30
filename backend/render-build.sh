@@ -1,32 +1,36 @@
+
 #!/usr/bin/env bash
-set -o errexit
+set -e
 
-# 1. Clear package manager build cache to instantly free up container RAM overhead
-npm cache clean --force
+echo "Installing production Node dependencies..."
+npm install --omit=dev --no-audit --no-fund
 
-# 2. 🚀 FIXED: Install project dependencies using clean, memory-safe, non-blocking constraints
-echo "Installing Node modules via memory-isolated clean install..."
-NODE_OPTIONS="--max-old-space-size=2048" npm ci --no-audit --no-fund
+echo "Creating Python virtual environment..."
+python3 -m venv .venv
 
-# 3. 🚀 FIXED: Force garbage collection optimization loops on Vite's asset compiler engine
-echo "Compiling optimized Vite Frontend assets..."
-NODE_OPTIONS="--max-old-space-size=1536" npm run build
+echo "Installing yt-dlp..."
+./.venv/bin/python -m pip install --no-cache-dir --upgrade pip
+./.venv/bin/python -m pip install --no-cache-dir -U "yt-dlp[default]"
 
-# 4. Allocate directory structural path for system binaries
+echo "Checking yt-dlp..."
+./.venv/bin/yt-dlp --version
+
+echo "Creating FFmpeg directory..."
 mkdir -p ./bin
 
-# 5. Download standalone Linux x86_64 yt-dlp binary (Directly using updated production link release paths)
-echo "Downloading standalone Linux x86_64 yt-dlp binary..."
-curl -L "https://github.com" -o ./bin/yt-dlp
-chmod a+rx ./bin/yt-dlp
+echo "Downloading FFmpeg..."
+curl -fL \
+  "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+  -o /tmp/ffmpeg.tar.xz
 
-# 6. Download pre-compiled stable Linux static binary for FFmpeg
-echo "Downloading stable Linux FFmpeg binary..."
-curl -L "https://github.com" -o ./bin/ffmpeg
-chmod a+rx ./bin/ffmpeg
+echo "Extracting FFmpeg..."
+mkdir -p /tmp/ffmpeg
+tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg
 
-# 7. Post-build memory scrub: Instantly wipe out frontend compiler node_modules to clear storage rails
-echo "Pruning devDependencies to clear runtime container storage footprint..."
-npm prune --production
+cp /tmp/ffmpeg/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg ./bin/ffmpeg
+chmod +x ./bin/ffmpeg
 
-echo "Production deployment pipeline compiled completely without memory leaks!"
+echo "Checking FFmpeg..."
+./bin/ffmpeg -version
+
+echo "Build completed successfully!"

@@ -10,6 +10,10 @@ app.use(express.json());
 // 2. NOW IT IS SAFE TO COMPUTE PRODUCTION ENV PATHS
 const isProduction = process.env.NODE_ENV === "production";
 
+const YT_DLP_PATH = isProduction
+  ? path.join(__dirname, ".venv", "bin", "yt-dlp")
+  : "yt-dlp";
+
 if (isProduction) {
   process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
 
