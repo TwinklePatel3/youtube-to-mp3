@@ -7,7 +7,7 @@ npm install
 mkdir -p ./bin
 
 echo "Installing yt-dlp..."
-python3 -m pip install --user -U yt-dlp
+python3 -m pip install --break-system-packages -U yt-dlp
 
 echo "Downloading FFmpeg..."
 curl -L \
