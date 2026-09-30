@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -o errexit
 
-# 1. Install standard npm dependencies
+# 1. Install regular node package modules
 npm install
 
-# 2. Create custom execution bin directory
+# 2. Allocate space for global-mimicked binaries
 mkdir -p ./bin
 
-# 3. Pull latest Linux standalone binary for yt-dlp
-echo "Downloading static yt-dlp binary..."
+# 3. Pull standalone linux x86_64 binary for yt-dlp
+echo "Downloading stable yt-dlp binary..."
 curl -L https://github.com -o ./bin/yt-dlp
 chmod a+rx ./bin/yt-dlp
 
-# 4. Pull pre-compiled stable Linux static binary for FFmpeg
-echo "Downloading static FFmpeg binary..."
+# 4. Pull pre-compiled linux x86_64 binary for FFmpeg
+echo "Downloading stable FFmpeg binary..."
 curl -L https://github.com -o ./bin/ffmpeg
 chmod a+rx ./bin/ffmpeg
 
-echo "Render custom pipeline dependencies built successfully!"
+echo "Monorepo backend pipeline compiled completely!"

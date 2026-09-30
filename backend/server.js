@@ -1,10 +1,12 @@
 const isProduction = process.env.NODE_ENV === "production";
+
+// Target the bin directory relative to your backend folder path execution container
 const YT_DLP_PATH = isProduction
   ? path.join(__dirname, "bin", "yt-dlp")
   : "yt-dlp";
 
-// Inject local bin folder into system environment PATH for fluent-ffmpeg to discover
 if (isProduction) {
+  // Inject the local bin folder into the Linux system environment PATH so fluent-ffmpeg detects our custom ffmpeg binary
   process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
 }
 const express = require("express");
@@ -156,130 +158,6 @@ app.post("/api/song", async (req, res) => {
     });
   }
 });
-
-// app.post("/api/download", async (req, res) => {
-//   const { url, quality } = req.body;
-//   console.log("DOWNLOAD REQUEST:");
-//   console.log("URL:", url);
-//   console.log("QUALITY:", quality);
-
-//   if (!url) {
-//     return res.status(400).json({
-//       error: "URL is required",
-//     });
-//   }
-
-//   if (quality !== "128" && quality !== "320") {
-//     return res.status(400).json({
-//       error: "Invalid quality",
-//     });
-//   }
-
-//   // 2. Create the file path using the proper title
-//   const downloadId = `dl-${Date.now()}`;
-//   progressTracker[downloadId] = 0;
-
-//   // Declare variables in the route scope so the catch block can see them for cleanup
-//   let tempFilePath = "";
-//   let tempFilename = "";
-
-//   try {
-//     const videoId = getYouTubeVideoId(url);
-//     console.log("videoId ", videoId);
-
-//     const meta = await fetchVideoMeta(url);
-
-//     const audioStream = await streamAudio(url);
-//     tempFilename = `${meta.title}-${quality}kbps.mp3`;
-//     tempFilePath = path.join(__dirname, tempFilename);
-
-//     res.setHeader("X-Download-ID", downloadId);
-//     res.setHeader("Access-Control-Expose-Headers", "X-Download-ID");
-//     ffmpeg(audioStream)
-//       .audioBitrate(`${quality}k`)
-//       .format("mp3")
-//       .on("progress", (progress) => {
-//         // Calculate percentage tracking using the video's total duration
-//         if (meta.duration > 0 && progress.timemark) {
-//           const timeParts = progress.timemark.split(":");
-//           const secondsProcessed =
-//             parseFloat(timeParts[0]) * 3600 +
-//             parseFloat(timeParts[1]) * 60 +
-//             parseFloat(timeParts[2]);
-
-//           let percent = Math.round((secondsProcessed / meta.duration) * 100);
-//           if (percent > 100) percent = 100;
-//           if (percent < 0 || isNaN(percent)) percent = 0;
-
-//           // Push the calculated number to the global tracking object
-//           progressTracker[downloadId] = percent;
-//           conversionProgress = percent;
-//           console.log(`Conversion progress [${downloadId}]: ${percent}%`);
-//         } else {
-//           console.log("Conversion progress (raw data):", progress);
-//         }
-//       })
-//       .save(tempFilePath)
-//       .on("end", () => {
-//         console.log("FFMPEG Conversion Success!");
-//         progressTracker[downloadId] = 100; // Mark complete
-//         conversionProgress = 100;
-
-//         // 4. Force specific attachment headers so the browser triggers file saving with the clean name
-//         res.setHeader(
-//           "Content-Disposition",
-//           `attachment; filename="${encodeURIComponent(tempFilename)}"`,
-//         );
-//         res.setHeader("Content-Type", "audio/mpeg");
-
-//         // Stream the completed file from your disk down to the express response pipe
-//         fs.createReadStream(tempFilePath)
-//           .pipe(res)
-//           .on("finish", () => {
-//             // Cleanup step: delete the temp file off your hard drive after the user finishes receiving it
-//             fs.unlink(tempFilePath, (unlinkErr) => {
-//               if (unlinkErr)
-//                 console.error("Temp file erasure error:", unlinkErr);
-//               else console.log(`Cleaned up system file: ${tempFilename}`);
-//             });
-//           });
-//       })
-//       .on("error", (error) => {
-//         console.error("FFMPEG ERROR:", error);
-//         delete progressTracker[downloadId];
-//         delete conversionProgress;
-
-//         if (tempFilePath && fs.existsSync(tempFilePath))
-//           fs.unlinkSync(tempFilePath);
-
-//         if (!res.headersSent) {
-//           res.status(500).json({
-//             error: "Conversion failed",
-//           });
-//         }
-//       });
-//   } catch (error) {
-//     console.error("Route logic exception:", error.message);
-//     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-//     if (!res.headersSent) res.status(400).json({ error: error.message });
-//   }
-// });
-
-// app.get("/api/test-convert", (req, res) => {
-//   ffmpeg("test.wav")
-//     .audioBitrate("128k")
-//     .save("test-output.mp3")
-//     .on("end", () => {
-//       console.log("FFmpeg conversion completed");
-//       res.download("test-output.mp3", "converted.mp3");
-//     })
-//     .on("error", (error) => {
-//       console.error("FFmpeg error:", error);
-//       res.status(500).json({
-//         error: "Conversion failed",
-//       });
-//     });
-// });
 
 app.post("/api/init", async (req, res) => {
   const { url } = req.body;
@@ -483,6 +361,5 @@ app.get("/api/progress/:id", (req, res) => {
 
   req.on("close", () => clearInterval(interval));
 });
-app.listen(5001, () => {
-  console.log("Server running on port 5001");
-});
+const PORT = process.env.PORT || 5001;
+app.listen(PORT, () => console.log(`Server live on port ${PORT}`));
