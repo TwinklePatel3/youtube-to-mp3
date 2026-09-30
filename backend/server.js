@@ -5,6 +5,8 @@ const ffmpeg = require("fluent-ffmpeg");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const nodeID3 = require("node-id3");
+const sharp = require("sharp");
 app.use(cors());
 app.use(express.json());
 // 2. NOW IT IS SAFE TO COMPUTE PRODUCTION ENV PATHS
@@ -228,6 +230,7 @@ app.post("/api/download", async (req, res) => {
 });
 
 // PHASE 2: Raw Audio Processing & Streaming Endpoint
+
 app.get("/api/download-file", async (req, res) => {
   const { id } = req.query;
 
@@ -238,69 +241,52 @@ app.get("/api/download-file", async (req, res) => {
   const { meta, url, quality } = progressTracker[id + "-meta"];
   const tempFilename = `${meta.title}-${quality}kbps.mp3`;
   const tempFilePath = path.join(__dirname, tempFilename);
-  const tempImagePath = path.join(__dirname, `thumb-${id}.jpg`);
+  const rawImagePath = path.join(__dirname, `raw-thumb-${id}.jpg`);
+  const optimizedImagePath = path.join(__dirname, `thumb-${id}.jpg`);
+
+  let hasImage = false;
 
   try {
-    // 1. Download and cache the OEmbed thumbnail locally before initializing FFmpeg
+    // 1. Download and automatically optimize the thumbnail cover layout via Sharp
     if (meta.cover) {
       try {
         console.log(`Downloading cached OEmbed artwork asset: ${meta.cover}`);
         const imgRes = await fetch(meta.cover);
         if (imgRes.ok) {
           const arrayBuffer = await imgRes.arrayBuffer();
-          fs.writeFileSync(tempImagePath, Buffer.from(arrayBuffer));
-          console.log("Artwork cached locally successfully.");
+          fs.writeFileSync(rawImagePath, Buffer.from(arrayBuffer));
+
+          // 🚀 CROP IMAGE VIA SHARP FOR IPHONE APP COMPATIBILITY
+          // Crops 16:9 thumbnails into perfect 500x500 square baseline non-progressive JPEGs
+          await sharp(rawImagePath)
+            .resize(500, 500, { fit: "cover" })
+            .toFormat("jpeg", { quality: 85, progressive: false })
+            .toFile(optimizedImagePath);
+
+          hasImage = true;
+          console.log(
+            "Artwork cached locally and optimized for iOS successfully.",
+          );
         }
       } catch (imgErr) {
         console.error("Failed to compile thumbnail stream:", imgErr.message);
       }
     }
 
-    const audioStream = await streamAudio(url);
-    // console.log(audioStream, "audioStream");
-    if (!audioStream)
+    // 🚀 FIXED: Removed 'await' because streamAudio returns a synchronous stdout stream object handle
+    const audioStream = streamAudio(url);
+    if (!audioStream) {
       throw new Error(
         "Failed to initialize system yt-dlp audio stream pipeline.",
       );
-    // 2. Build the FFmpeg command engine
-    let ffmpegCommand = ffmpeg(audioStream);
-
-    const hasImage = fs.existsSync(tempImagePath);
-    if (hasImage) {
-      ffmpegCommand = ffmpegCommand.input(tempImagePath);
-    }
-    ffmpegCommand.audioCodec("libmp3lame");
-    ffmpegCommand.audioBitrate(`${quality}k`).format("mp3");
-
-    // 🚀 FIXED: Combined options strings using '=' assignment to prevent space-parsing shell arguments crashes
-    if (hasImage) {
-      ffmpegCommand.outputOptions([
-        "-map",
-        "0:0", // Map input index 0 (yt-dlp raw audio stream channel)
-        "-map",
-        "1:0", // Map input index 1 (cached local image channel)
-        "-c:v",
-        "mjpeg", // Compress artwork using standard MJPEG video codec
-
-        // 🚀 FIXED: Combined the video filter flags cleanly to prevent index clashing argument errors
-        "-vf",
-        "scale=500:500:force_original_aspect_ratio=increase,crop=500:500",
-
-        "-id3v2_version",
-        "3", // Force ID3v2.3 tagging standard for Apple Music compatibility
-        "-metadata:s:v:0",
-        "title=Cover", // Clean metadata title window
-        "-metadata:s:v:0",
-        "comment=Artwork", // Clean metadata comment layout
-      ]);
-    } else {
-      ffmpegCommand.outputOptions([
-        "-map",
-        "0:0", // Fallback: map only the first audio stream layer safely
-      ]);
     }
 
-    ffmpegCommand
+    // 2. Clean & Safe FFmpeg execution (Pure conversion, completely removing the buggy -vf option arguments)
+    ffmpeg(audioStream)
+      .audioCodec("libmp3lame")
+      .audioBitrate(`${quality}k`)
+      .format("mp3")
+      .outputOptions(["-map", "0:0"]) // Map ONLY the first audio stream layer safely
       .on("progress", (progress) => {
         if (meta.duration > 0 && progress.timemark) {
           const timeParts = progress.timemark.split(":");
@@ -310,51 +296,86 @@ app.get("/api/download-file", async (req, res) => {
             parseFloat(timeParts[2]);
 
           let percent = Math.round((secondsProcessed / meta.duration) * 100);
-          progressTracker[id] = Math.min(Math.max(percent, 0), 99);
+          progressTracker[id] = Math.min(Math.max(percent, 0), 99); // Lock below 100% until tags write
         }
       })
       .save(tempFilePath)
       .on("end", () => {
-        console.log("FFMPEG Conversion Complete with Artwork Embedded!");
-        progressTracker[id] = 100;
+        console.log(
+          "FFMPEG Conversion Success! Injecting ID3 metadata tags...",
+        );
 
+        // 3. Inject Album Cover Art & Song Metadata securely via node-id3
+        const tags = {
+          title: meta.title,
+          artist: "YouTube Downloader",
+        };
+
+        if (hasImage && fs.existsSync(optimizedImagePath)) {
+          tags.image = {
+            mime: "image/jpeg",
+            type: { id: 3, name: "front cover" }, // Cover art tag marker
+            description: "Cover Art",
+            imageBuffer: fs.readFileSync(optimizedImagePath),
+          };
+        }
+
+        // Add the metadata bundle onto your generated file instantly
+        const success = nodeID3.write(tags, tempFilePath);
+        if (success)
+          console.log(
+            "ID3 Metadata and cropped artwork embedded successfully for iPhone Music compatibility!",
+          );
+
+        progressTracker[id] = 100; // Finish frontend percentage tracking loader
+
+        // 4. Stream the finalized file down to your user's browser download pipe
         res.setHeader(
           "Content-Disposition",
           `attachment; filename="${encodeURIComponent(tempFilename)}"`,
         );
         res.setHeader("Content-Type", "audio/mpeg");
 
-        fs.createReadStream(tempFilePath)
-          .pipe(res)
-          .on("finish", () => {
-            // 3. Cleanup Step: Delete BOTH local temp file assets off your server disk space
-            fs.unlink(tempFilePath, (err) => {
-              if (err) console.error("Audio cleanup error:", err);
+        const fileStream = fs.createReadStream(tempFilePath);
 
-              if (fs.existsSync(tempImagePath)) {
-                fs.unlink(tempImagePath, (imgErr) => {
-                  if (imgErr) console.error("Image cleanup error:", imgErr);
-                  else
-                    console.log(
-                      "Temporary file workspace scrubbed successfully.",
-                    );
-                });
-              }
-              delete progressTracker[id + "-meta"];
-            });
-          });
+        // Handle network connection drops silently on the stream itself
+        fileStream.on("error", (streamErr) => {
+          console.error(
+            `Silent stream transmission interruption caught: ${streamErr.message}`,
+          );
+          if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+          if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
+          if (fs.existsSync(optimizedImagePath))
+            fs.unlinkSync(optimizedImagePath);
+          delete progressTracker[id + "-meta"];
+        });
+
+        fileStream.pipe(res).on("finish", () => {
+          // Comprehensive File System Cleanup
+          if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+          if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
+          if (fs.existsSync(optimizedImagePath))
+            fs.unlinkSync(optimizedImagePath);
+          delete progressTracker[id + "-meta"];
+          console.log("Temporary file workspace scrubbed successfully.");
+        });
       })
       .on("error", (error) => {
-        console.error("FFMPEG Error:", error.message);
+        console.error("FFMPEG ERROR:", error.message);
         delete progressTracker[id];
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+        if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
+        if (fs.existsSync(optimizedImagePath))
+          fs.unlinkSync(optimizedImagePath);
         if (!res.headersSent) res.status(500).send("Audio compilation failed.");
       });
   } catch (error) {
     console.error("Streaming error:", error.message);
+    delete progressTracker[id];
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+    if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
+    if (fs.existsSync(optimizedImagePath)) fs.unlinkSync(optimizedImagePath);
+    if (!res.headersSent) res.status(400).send(error.message);
   }
 });
 
