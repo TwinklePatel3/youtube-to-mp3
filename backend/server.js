@@ -302,6 +302,26 @@ app.get("/api/download-file", async (req, res) => {
     //   ]);
     // }
 
+    if (hasImage) {
+      ffmpegCommand = ffmpegCommand.input(tempImagePath);
+
+      ffmpegCommand.outputOptions([
+        "-map",
+        "0:a:0",
+        "-map",
+        "1:v:0",
+        "-c:v",
+        "mjpeg",
+        "-id3v2_version",
+        "3",
+        "-metadata:s:v:0",
+        "title=Cover",
+        "-metadata:s:v:0",
+        "comment=Cover",
+        "-disposition:v:0",
+        "attached_pic",
+      ]);
+    }
     ffmpegCommand
       .on("progress", (progress) => {
         if (meta.duration > 0 && progress.timemark) {
