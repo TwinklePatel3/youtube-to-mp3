@@ -1,3 +1,12 @@
+const express = require("express");
+const cors = require("cors");
+const app = express();
+const ffmpeg = require("fluent-ffmpeg");
+const { spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+app.use(cors());
+app.use(express.json());
 const isProduction = process.env.NODE_ENV === "production";
 
 // Target the bin directory relative to your backend folder path execution container
@@ -9,15 +18,6 @@ if (isProduction) {
   // Inject the local bin folder into the Linux system environment PATH so fluent-ffmpeg detects our custom ffmpeg binary
   process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
 }
-const express = require("express");
-const cors = require("cors");
-const app = express();
-const ffmpeg = require("fluent-ffmpeg");
-const { spawn } = require("child_process");
-const fs = require("fs");
-const path = require("path");
-app.use(cors());
-app.use(express.json());
 const progressTracker = {};
 let conversionProgress = 0;
 app.use(
