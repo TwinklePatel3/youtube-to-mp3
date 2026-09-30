@@ -58,23 +58,24 @@ async function fetchVideoMeta(url) {
   // (By asking ONLY for duration, yt-dlp executes significantly faster)
   try {
     duration = await new Promise((resolve) => {
-      const ytDlpObj = isProduction
-        ? spawn(YT_DLP_PYTHON, ["-m", "yt_dlp", "--print", "duration", url])
-        : spawn("yt-dlp", ["--print", "duration", url]);
+      const ytDlpObj = spawn(YT_DLP_PATH, [
+        "--print",
+        "duration",
+        "--no-playlist",
+        url,
+      ]);
       let dataBuffer = "";
 
       ytDlpObj.stdout.on("data", (data) => {
         dataBuffer += data.toString();
       });
-
       ytDlpObj.on("close", (code) => {
-        if (code === 0 && dataBuffer.trim()) {
-          resolve(parseFloat(dataBuffer.trim()) || 0);
-        } else {
-          resolve(0);
-        }
+        resolve(
+          code === 0 && dataBuffer.trim()
+            ? parseFloat(dataBuffer.trim()) || 0
+            : 0,
+        );
       });
-
       ytDlpObj.on("error", () => resolve(0));
     });
     console.log(`Duration captured via yt-dlp: ${duration} seconds`);
@@ -104,36 +105,20 @@ function getYouTubeVideoId(url) {
 function streamAudio(url) {
   console.log("Spawning system audio conversion stream...");
 
-  // Force running via python3 interpreter loop in production
-  const spawnCommand = isProduction ? "python3" : YT_DLP_PATH;
-  const spawnArgs = isProduction
-    ? [
-        YT_DLP_PATH,
-        url,
-        "--output",
-        "-",
-        "--format",
-        "bestaudio/best",
-        "--no-check-certificates",
-        "--prefer-free-formats",
-        "--limit-rate",
-        "3M",
-        "--js-runtimes",
-        "node",
-      ]
-    : [
-        url,
-        "--output",
-        "-",
-        "--format",
-        "bestaudio/best",
-        "--no-check-certificates",
-        "--prefer-free-formats",
-        "--limit-rate",
-        "3M",
-      ];
-
-  const ytDlpProcess = spawn(spawnCommand, spawnArgs);
+  // Spawns the binary directly using our clean system environment pathing configurations
+  const ytDlpProcess = spawn(YT_DLP_PATH, [
+    url,
+    "--output",
+    "-",
+    "--format",
+    "bestaudio/best",
+    "--no-check-certificates",
+    "--prefer-free-formats",
+    "--limit-rate",
+    "3M",
+    "--js-runtimes",
+    "node",
+  ]);
 
   ytDlpProcess.on("error", (err) => {
     console.error("Failed to start yt-dlp process binary:", err.message);
