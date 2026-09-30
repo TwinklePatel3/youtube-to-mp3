@@ -4,17 +4,17 @@ set -o errexit
 # 1. Install regular node package modules
 npm install
 
-# 2. Allocate space for global-mimicked binaries
+# 2. Allocate space for our production binary execution directory
 mkdir -p ./bin
 
-# 3. Pull standalone linux x86_64 binary for yt-dlp
-echo "Downloading stable yt-dlp binary..."
+# 3. 🚀 FIXED: Download the explicit standalone LINUX architecture binary for yt-dlp
+echo "Downloading standalone Linux x86_64 yt-dlp binary..."
 curl -L https://github.com -o ./bin/yt-dlp
 chmod a+rx ./bin/yt-dlp
 
-# 4. Pull pre-compiled linux x86_64 binary for FFmpeg
-echo "Downloading stable FFmpeg binary..."
+# 4. Download pre-compiled stable Linux static binary for FFmpeg
+echo "Downloading stable Linux FFmpeg binary..."
 curl -L https://github.com -o ./bin/ffmpeg
 chmod a+rx ./bin/ffmpeg
 
-echo "Monorepo backend pipeline compiled completely!"
+echo "Production deployment binaries successfully mounted!"
