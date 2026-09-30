@@ -59,7 +59,15 @@ async function fetchVideoMeta(url) {
   try {
     duration = await new Promise((resolve) => {
       const ytDlpObj = isProduction
-        ? spawn("python3", ["-m", "yt_dlp", "--print", "duration", url])
+        ? spawn("python3", [
+            "-m",
+            "yt_dlp",
+            "--print",
+            "duration",
+            "--js-runtimes",
+            "node",
+            url,
+          ])
         : spawn("yt-dlp", ["--print", "duration", url]);
       let dataBuffer = "";
 
@@ -102,7 +110,7 @@ function getYouTubeVideoId(url) {
 }
 
 function streamAudio(url) {
-  console.log("Spawning system audio conversion stream...");
+  console.log("Spawning yt-dlp audio stream...");
 
   const spawnCommand = isProduction ? "python3" : "yt-dlp";
 
@@ -119,6 +127,8 @@ function streamAudio(url) {
         "--prefer-free-formats",
         "--limit-rate",
         "3M",
+        "--js-runtimes",
+        "node",
       ]
     : [
         url,
@@ -143,6 +153,10 @@ function streamAudio(url) {
 
   ytDlpProcess.stderr.on("data", (data) => {
     console.log(`yt-dlp log: ${data.toString().trim()}`);
+  });
+
+  ytDlpProcess.on("close", (code) => {
+    console.log("yt-dlp exited with code:", code);
   });
 
   return ytDlpProcess.stdout;
