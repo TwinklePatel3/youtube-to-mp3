@@ -1,3 +1,12 @@
+const isProduction = process.env.NODE_ENV === "production";
+const YT_DLP_PATH = isProduction
+  ? path.join(__dirname, "bin", "yt-dlp")
+  : "yt-dlp";
+
+// Inject local bin folder into system environment PATH for fluent-ffmpeg to discover
+if (isProduction) {
+  process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
+}
 const express = require("express");
 const cors = require("cors");
 const app = express();
