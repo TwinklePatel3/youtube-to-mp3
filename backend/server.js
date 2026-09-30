@@ -117,7 +117,7 @@ async function streamAudio(url) {
     "3M",
     "--js-runtimes",
     "node",
-  ]).stdout;
+  ]);
 
   // Handle process startup errors (e.g., if path is not found)
   ytDlp.on("error", (err) => {
@@ -236,6 +236,7 @@ app.get("/api/download-file", async (req, res) => {
     }
 
     const audioStream = await streamAudio(url);
+    console.log(audioStream, "audioStream");
 
     // 2. Build the FFmpeg command engine
     let ffmpegCommand = ffmpeg(audioStream);

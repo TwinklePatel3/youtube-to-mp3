@@ -54,44 +54,6 @@ function App() {
     };
   }, [downloadId]);
 
-  // async function requestDownload(url, quality) {
-  //   setIsDownloading(true);
-  //   setProgress(0);
-  //   setDownloadId(null);
-
-  //   try {
-  //     // 🚀 FIXED: Pointed explicitly to the complete backend address and port route
-  //     const response = await fetch("https://youtube-to-mp3-rhww.onrender.com/api/download", {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({ url, quality }),
-  //     });
-
-  //     if (!response.ok) {
-  //       setIsDownloading(false);
-  //       throw new Error("Download request failed");
-  //     }
-
-  //     const trackedId = response.headers.get("X-Download-ID");
-  //     console.log("Captured tracking target token:", trackedId);
-
-  //     if (trackedId) {
-  //       setDownloadId(trackedId); // Triggers the useEffect loop to listen to progress
-  //     }
-
-  //     console.log("Response received:", response.status);
-
-  //     const blob = await response.blob();
-  //     console.log("Blob received successfully:", blob.size, blob.type);
-
-  //     return blob;
-  //   } catch (err) {
-  //     setIsDownloading(false);
-  //     console.error("Network interface error occurred:", err.message);
-  //     throw err;
-  //   }
-  // }
-
   async function requestDownload(url, quality) {
     setIsDownloading(true);
     setProgress(0);
