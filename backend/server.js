@@ -100,37 +100,49 @@ function getYouTubeVideoId(url) {
   return parsedUrl.searchParams.get("v");
 }
 
-async function streamAudio(url) {
-  console.log("Spawning yt-dlp process to stream raw chunks...");
-  console.log("Spawning system yt-dlp directly...");
+function streamAudio(url) {
+  console.log("Spawning system audio conversion stream...");
 
-  // Spawns 'yt-dlp' globally from your machine's environment path
-  const ytDlp = spawn("yt-dlp", [
-    url,
-    "--output",
-    "-", // Stream directly to stdout
-    "--format",
-    "bestaudio/best", // Select top audio track
-    "--no-check-certificates",
-    "--prefer-free-formats",
-    "--limit-rate",
-    "3M",
-    "--js-runtimes",
-    "node",
-  ]);
+  // If running in production on Render, spawn via python3 interpreter explicitly
+  const spawnCommand = isProduction ? "python3" : YT_DLP_PATH;
+  const spawnArgs = isProduction
+    ? [
+        YT_DLP_PATH,
+        url,
+        "--output",
+        "-",
+        "--format",
+        "bestaudio/best",
+        "--no-check-certificates",
+        "--prefer-free-formats",
+        "--limit-rate",
+        "3M",
+        "--js-runtimes",
+        "node",
+      ]
+    : [
+        url,
+        "--output",
+        "-",
+        "--format",
+        "bestaudio/best",
+        "--no-check-certificates",
+        "--prefer-free-formats",
+        "--limit-rate",
+        "3M",
+      ];
 
-  // Handle process startup errors (e.g., if path is not found)
-  ytDlp.on("error", (err) => {
-    console.error("Failed to start yt-dlp process:", err.message);
+  const ytDlpProcess = spawn(spawnCommand, spawnArgs);
+
+  ytDlpProcess.on("error", (err) => {
+    console.error("Failed to start yt-dlp process binary:", err.message);
   });
 
-  // Log any internal errors coming from yt-dlp itself
-  ytDlp.stderr.on("data", (data) => {
+  ytDlpProcess.stderr.on("data", (data) => {
     console.log(`yt-dlp log: ${data.toString().trim()}`);
   });
 
-  // Return the raw stdout data stream for FFmpeg to capture
-  return ytDlp.stdout;
+  return ytDlpProcess.stdout;
 }
 
 app.get("/", (req, res) => {
