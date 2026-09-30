@@ -110,53 +110,40 @@ function getYouTubeVideoId(url) {
 }
 
 function streamAudio(url) {
-  console.log("Spawning yt-dlp audio stream...");
+  console.log("========== YT-DLP START ==========");
 
-  const spawnCommand = isProduction ? "python3" : "yt-dlp";
+  const args = [
+    "-m",
+    "yt_dlp",
+    url,
+    "--output",
+    "-",
+    "--format",
+    "bestaudio/best",
+    "--no-check-certificates",
+    "--prefer-free-formats",
+    "--limit-rate",
+    "3M",
+    "--js-runtimes",
+    "node",
+    "--verbose",
+  ];
 
-  const spawnArgs = isProduction
-    ? [
-        "-m",
-        "yt_dlp",
-        url,
-        "--output",
-        "-",
-        "--format",
-        "bestaudio/best",
-        "--no-check-certificates",
-        "--prefer-free-formats",
-        "--limit-rate",
-        "3M",
-        "--js-runtimes",
-        "node",
-      ]
-    : [
-        url,
-        "--output",
-        "-",
-        "--format",
-        "bestaudio/best",
-        "--no-check-certificates",
-        "--prefer-free-formats",
-        "--limit-rate",
-        "3M",
-      ];
+  console.log("Running:", "python3", args.join(" "));
 
-  console.log("yt-dlp command:", spawnCommand);
-  console.log("yt-dlp args:", spawnArgs);
-
-  const ytDlpProcess = spawn(spawnCommand, spawnArgs);
+  const ytDlpProcess = spawn("python3", args);
 
   ytDlpProcess.on("error", (err) => {
-    console.error("Failed to start yt-dlp:", err.message);
+    console.error("YT-DLP PROCESS ERROR:", err.message);
   });
 
   ytDlpProcess.stderr.on("data", (data) => {
-    console.log(`yt-dlp log: ${data.toString().trim()}`);
+    console.log(`YT-DLP STDERR: ${data.toString()}`);
   });
 
   ytDlpProcess.on("close", (code) => {
-    console.log("yt-dlp exited with code:", code);
+    console.log("YT-DLP EXIT CODE:", code);
+    console.log("========== YT-DLP END ==========");
   });
 
   return ytDlpProcess.stdout;

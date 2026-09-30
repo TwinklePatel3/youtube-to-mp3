@@ -6,12 +6,12 @@ npm install
 
 mkdir -p ./bin
 
-echo "Installing yt-dlp..."
-echo "Checking Node version..."
+echo "Node version:"
 node --version
 
-echo "Installing yt-dlp with EJS support..."
+echo "Installing yt-dlp + EJS..."
 python3 -m pip install --break-system-packages -U "yt-dlp[default]"
+
 echo "Downloading FFmpeg..."
 curl -L \
   "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz" \
