@@ -62,12 +62,14 @@ async function fetchVideoMeta(url) {
   // (By asking ONLY for duration, yt-dlp executes significantly faster)
   try {
     duration = await new Promise((resolve) => {
-      const ytDlpObj = spawn(YT_DLP_PATH, [
-        "--print",
-        "duration",
-        "--no-playlist",
-        url,
-      ]);
+      const cookiePath = path.join(__dirname, "youtube-cookies.txt");
+      const spawnArgs = ["--print", "duration", "--no-playlist", url];
+
+      if (fs.existsSync(cookiePath)) {
+        spawnArgs.push("--cookies", cookiePath); // 👈 Add cookies here as well
+      }
+
+      const ytDlpObj = spawn(YT_DLP_PATH, spawnArgs);
       let dataBuffer = "";
 
       ytDlpObj.stdout.on("data", (data) => {
@@ -108,9 +110,9 @@ function getYouTubeVideoId(url) {
 
 function streamAudio(url) {
   console.log("Spawning system audio conversion stream...");
-
+  const cookiePath = path.join(__dirname, "youtube-cookies.txt");
   // Spawns the binary directly using our clean system environment pathing configurations
-  const ytDlpProcess = spawn(YT_DLP_PATH, [
+  const spawnArgs = [
     url,
     "--output",
     "-",
@@ -122,8 +124,19 @@ function streamAudio(url) {
     "3M",
     "--js-runtimes",
     "node",
-  ]);
+  ];
+  if (fs.existsSync(cookiePath)) {
+    console.log(
+      "Verified cookie file discovered. Injecting human profile session tokens...",
+    );
+    spawnArgs.push("--cookies", cookiePath); // 👈 Instructs yt-dlp to read your local Netscape text array file
+  } else {
+    console.warn(
+      "No youtube-cookies.txt found at root directory. Running anonymously.",
+    );
+  }
 
+  const ytDlpProcess = spawn(YT_DLP_PATH, spawnArgs);
   ytDlpProcess.on("error", (err) => {
     console.error("Failed to start yt-dlp process binary:", err.message);
   });

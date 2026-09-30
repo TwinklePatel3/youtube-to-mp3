@@ -14,7 +14,11 @@ echo "Installing yt-dlp..."
 
 echo "Checking yt-dlp..."
 ./.venv/bin/yt-dlp --version
-
+# Append this right inside your render-build.sh file layout:
+echo "Rebuilding secure YouTube session container data files..."
+if [ -n "$YT_COOKIES_DATA" ]; then
+  echo "$YT_COOKIES_DATA" > ./youtube-cookies.txt
+fi
 echo "Creating FFmpeg directory..."
 mkdir -p ./bin
 
