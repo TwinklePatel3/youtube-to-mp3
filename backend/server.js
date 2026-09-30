@@ -9,12 +9,11 @@ app.use(cors());
 app.use(express.json());
 // 2. NOW IT IS SAFE TO COMPUTE PRODUCTION ENV PATHS
 const isProduction = process.env.NODE_ENV === "production";
-const YT_DLP_PATH = isProduction
-  ? path.join(__dirname, "bin", "yt-dlp")
-  : "yt-dlp";
 
 if (isProduction) {
   process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
+
+  ffmpeg.setFfmpegPath(path.join(__dirname, "bin", "ffmpeg"));
 }
 const progressTracker = {};
 let conversionProgress = 0;
@@ -59,7 +58,9 @@ async function fetchVideoMeta(url) {
   // (By asking ONLY for duration, yt-dlp executes significantly faster)
   try {
     duration = await new Promise((resolve) => {
-      const ytDlpObj = spawn("yt-dlp", ["--print", "duration", url]);
+      const ytDlpObj = isProduction
+        ? spawn("python3", ["-m", "yt_dlp", "--print", "duration", url])
+        : spawn("yt-dlp", ["--print", "duration", url]);
       let dataBuffer = "";
 
       ytDlpObj.stdout.on("data", (data) => {
@@ -103,11 +104,12 @@ function getYouTubeVideoId(url) {
 function streamAudio(url) {
   console.log("Spawning system audio conversion stream...");
 
-  // If running in production on Render, spawn via python3 interpreter explicitly
-  const spawnCommand = isProduction ? "python3" : YT_DLP_PATH;
+  const spawnCommand = isProduction ? "python3" : "yt-dlp";
+
   const spawnArgs = isProduction
     ? [
-        YT_DLP_PATH,
+        "-m",
+        "yt_dlp",
         url,
         "--output",
         "-",
@@ -117,8 +119,6 @@ function streamAudio(url) {
         "--prefer-free-formats",
         "--limit-rate",
         "3M",
-        "--js-runtimes",
-        "node",
       ]
     : [
         url,
@@ -132,10 +132,13 @@ function streamAudio(url) {
         "3M",
       ];
 
+  console.log("yt-dlp command:", spawnCommand);
+  console.log("yt-dlp args:", spawnArgs);
+
   const ytDlpProcess = spawn(spawnCommand, spawnArgs);
 
   ytDlpProcess.on("error", (err) => {
-    console.error("Failed to start yt-dlp process binary:", err.message);
+    console.error("Failed to start yt-dlp:", err.message);
   });
 
   ytDlpProcess.stderr.on("data", (data) => {

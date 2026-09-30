@@ -1,20 +1,31 @@
 #!/usr/bin/env bash
 set -o errexit
 
-# 1. Install regular node package modules
+echo "Installing Node dependencies..."
 npm install
 
-# 2. Allocate space for our production binary execution directory
 mkdir -p ./bin
 
-# 3. 🚀 FIXED: Download the real raw python executable bundle script (Not an HTML redirect page)
-echo "Downloading clean raw python yt-dlp source execution bundle..."
-curl -L "https://github.com" -o ./bin/yt-dlp
-chmod a+rx ./bin/yt-dlp
+echo "Installing yt-dlp..."
+python3 -m pip install --user -U yt-dlp
 
-# 4. Download pre-compiled stable Linux static binary for FFmpeg
-echo "Downloading stable Linux FFmpeg binary..."
-curl -L https://github.com -o ./bin/ffmpeg
-chmod a+rx ./bin/ffmpeg
+echo "Downloading FFmpeg..."
+curl -L \
+  "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+  -o /tmp/ffmpeg.tar.xz
 
-echo "Production deployment binaries successfully mounted!"
+mkdir -p /tmp/ffmpeg
+
+tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg
+
+cp /tmp/ffmpeg/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg ./bin/ffmpeg
+
+chmod +x ./bin/ffmpeg
+
+echo "Checking yt-dlp..."
+python3 -m yt_dlp --version
+
+echo "Checking FFmpeg..."
+./bin/ffmpeg -version
+
+echo "Production dependencies installed successfully!"
