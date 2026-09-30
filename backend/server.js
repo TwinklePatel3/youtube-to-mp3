@@ -276,28 +276,27 @@ app.get("/api/download-file", async (req, res) => {
     if (hasImage) {
       ffmpegCommand.outputOptions([
         "-map",
-        "0:0", // Map yt-dlp audio stream
-
+        "0:0", // Map input index 0 (yt-dlp raw audio stream channel)
         "-map",
-        "1:0", // Map cached local image
-
+        "1:0", // Map input index 1 (cached local image channel)
         "-c:v",
-        "mjpeg", // Compress artwork using MJPEG
+        "mjpeg", // Compress artwork using standard MJPEG video codec
 
+        // 🚀 FIXED: Combined the video filter flags cleanly to prevent index clashing argument errors
         "-vf",
         "scale=500:500:force_original_aspect_ratio=increase,crop=500:500",
 
         "-id3v2_version",
-        "3", // ID3v2.3 for Apple/iPhone compatibility
-
+        "3", // Force ID3v2.3 tagging standard for Apple Music compatibility
         "-metadata:s:v:0",
-        "title=Cover",
-
+        "title=Cover", // Clean metadata title window
         "-metadata:s:v:0",
-        "comment=Artwork",
-
-        "-disposition:v:0",
-        "attached_pic",
+        "comment=Artwork", // Clean metadata comment layout
+      ]);
+    } else {
+      ffmpegCommand.outputOptions([
+        "-map",
+        "0:0", // Fallback: map only the first audio stream layer safely
       ]);
     }
 
