@@ -236,8 +236,11 @@ app.get("/api/download-file", async (req, res) => {
     }
 
     const audioStream = await streamAudio(url);
-    console.log(audioStream, "audioStream");
-
+    // console.log(audioStream, "audioStream");
+    if (!audioStream)
+      throw new Error(
+        "Failed to initialize system yt-dlp audio stream pipeline.",
+      );
     // 2. Build the FFmpeg command engine
     let ffmpegCommand = ffmpeg(audioStream);
 
@@ -245,7 +248,7 @@ app.get("/api/download-file", async (req, res) => {
     if (hasImage) {
       ffmpegCommand = ffmpegCommand.input(tempImagePath);
     }
-
+    ffmpegCommand.audioCodec("libmp3lame");
     ffmpegCommand.audioBitrate(`${quality}k`).format("mp3");
 
     // 🚀 FIXED: Combined options strings using '=' assignment to prevent space-parsing shell arguments crashes

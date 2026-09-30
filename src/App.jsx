@@ -22,7 +22,7 @@ function App() {
 
       // 🚀 FIXED: Changed downloadid to {downloadId} with a capital 'I'
       eventSource = new EventSource(
-        `https://youtube-to-mp3-rhww.onrender.com/api/progress/${downloadId}`,
+        `http://127.0.0.1:5001/api/progress/${downloadId}`,
         {
           withCredentials: false,
         },
@@ -60,14 +60,11 @@ function App() {
     setDownloadId(null);
 
     try {
-      const response = await fetch(
-        "https://youtube-to-mp3-rhww.onrender.com/api/download",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, quality }),
-        },
-      );
+      const response = await fetch("http://127.0.0.1:5001/api/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, quality }),
+      });
 
       if (!response.ok) {
         setIsDownloading(false);
@@ -91,18 +88,15 @@ function App() {
   }
 
   async function getSongData(url) {
-    const response = await fetch(
-      "https://youtube-to-mp3-rhww.onrender.com/api/song",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: url,
-        }),
+    const response = await fetch("http://127.0.0.1:5001/api/song", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        url: url,
+      }),
+    });
     if (!response.ok) {
       throw new Error("Failed to get video information");
     }
@@ -230,7 +224,7 @@ function App() {
                 if (targetId) {
                   // Step B: Hand off the processing work to the browser's native background downloder
                   // This runs in parallel without locking up the UI thread, letting the progress bar move smoothly!
-                  window.location.href = `https://youtube-to-mp3-rhww.onrender.com/api/download-file?url=${encodeURIComponent(url)}&quality=${quality}&id=${targetId}`;
+                  window.location.href = `http://127.0.0.1:5001/api/download-file?url=${encodeURIComponent(url)}&quality=${quality}&id=${targetId}`;
                 }
               } catch (err) {
                 setError(err.message);
