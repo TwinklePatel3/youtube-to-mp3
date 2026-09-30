@@ -7,15 +7,13 @@ const fs = require("fs");
 const path = require("path");
 app.use(cors());
 app.use(express.json());
+// 2. NOW IT IS SAFE TO COMPUTE PRODUCTION ENV PATHS
 const isProduction = process.env.NODE_ENV === "production";
-
-// Target the bin directory relative to your backend folder path execution container
 const YT_DLP_PATH = isProduction
   ? path.join(__dirname, "bin", "yt-dlp")
   : "yt-dlp";
 
 if (isProduction) {
-  // Inject the local bin folder into the Linux system environment PATH so fluent-ffmpeg detects our custom ffmpeg binary
   process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
 }
 const progressTracker = {};
