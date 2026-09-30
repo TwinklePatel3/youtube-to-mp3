@@ -115,7 +115,9 @@ async function streamAudio(url) {
     "--prefer-free-formats",
     "--limit-rate",
     "3M",
-  ]);
+    "--js-runtimes",
+    "node",
+  ]).stdout;
 
   // Handle process startup errors (e.g., if path is not found)
   ytDlp.on("error", (err) => {
