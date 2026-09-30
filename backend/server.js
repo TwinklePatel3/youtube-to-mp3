@@ -127,7 +127,13 @@ function streamAudio(url) {
   ytDlpProcess.on("error", (err) => {
     console.error("Failed to start yt-dlp process binary:", err.message);
   });
-
+  ytDlpProcess.on("close", (code) => {
+    if (code !== 0) {
+      console.error(`yt-dlp failed with exit code: ${code}`);
+    } else {
+      console.log("yt-dlp finished successfully");
+    }
+  });
   ytDlpProcess.stderr.on("data", (data) => {
     console.log(`yt-dlp log: ${data.toString().trim()}`);
   });
