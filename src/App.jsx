@@ -224,13 +224,34 @@ function App() {
             disabled={isDownloading}
             onClick={async () => {
               try {
-                // Step A: Initialize download session token instantly
+                // 1. Fire the session handshake pass to generate the tracking token
                 const targetId = await requestDownload(url, quality);
 
                 if (targetId) {
-                  // Step B: Hand off the processing work to the browser's native background downloder
-                  // This runs in parallel without locking up the UI thread, letting the progress bar move smoothly!
-                  window.location.href = `https://youtube-to-mp3-rhww.onrender.com/api/download-file?url=${encodeURIComponent(url)}&quality=${quality}&id=${targetId}`;
+                  console.log("Downloading audio binary data chunks...");
+
+                  // 2. Fetch the file via a background stream (fixes automatic downloading without prompt)
+                  const fileResponse = await fetch(
+                    `http://127.0.0{encodeURIComponent(url)}&quality=${quality}&id=${targetId}`,
+                  );
+
+                  if (!fileResponse.ok)
+                    throw new Error("Audio file transmission dropped.");
+
+                  const blob = await fileResponse.blob();
+                  const downloadUrl = URL.createObjectURL(blob);
+
+                  // 3. Trigger standard browser save dialog popup behavior with custom clean title
+                  const link = document.createElement("a");
+                  link.href = downloadUrl;
+                  link.download = `${songData.title}.mp3`;
+
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+
+                  URL.revokeObjectURL(downloadUrl);
+                  console.log("Audio track downloaded successfully.");
                 }
               } catch (err) {
                 setError(err.message);

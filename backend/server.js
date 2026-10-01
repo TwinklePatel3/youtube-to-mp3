@@ -262,7 +262,6 @@ app.get("/api/download-file", async (req, res) => {
     if (fs.existsSync(tempImagePath)) {
       try {
         console.log("Preparing full square artwork...");
-
         const originalImage = fs.readFileSync(tempImagePath);
 
         // Create a blurred square background.
@@ -272,7 +271,7 @@ app.get("/api/download-file", async (req, res) => {
           .jpeg({ quality: 90 })
           .toBuffer();
 
-        // Resize the original image without adding transparent padding.
+        // Resize the original image cleanly keeping aspect ratio inside the boundaries
         const foreground = await sharp(originalImage)
           .resize({
             width: 500,
@@ -283,71 +282,34 @@ app.get("/api/download-file", async (req, res) => {
           .png()
           .toBuffer();
 
-        // Overlay the complete image in the center of the background.
+        // Overlay the complete image in the center of the blurred backdrop
         const finalArtwork = await sharp(background)
-          .composite([
-            {
-              input: foreground,
-              gravity: "centre",
-            },
-          ])
+          .composite([{ input: foreground, gravity: "centre" }])
           .jpeg({ quality: 95 })
           .toBuffer();
 
         fs.writeFileSync(tempImagePath, finalArtwork);
-
         console.log("Full square artwork prepared.");
       } catch (error) {
         console.error("Artwork processing failed:", error.message);
       }
     }
-    const audioStream = await streamAudio(url);
-    // console.log(audioStream, "audioStream");
+
+    // 🚀 CRITICAL FIX: Removed 'await' so stream audio hooks into execution concurrently!
+    const audioStream = streamAudio(url);
     if (!audioStream)
       throw new Error(
         "Failed to initialize system yt-dlp audio stream pipeline.",
       );
-    // 2. Build the FFmpeg command engine
-    let ffmpegCommand = ffmpeg(audioStream);
 
+    let ffmpegCommand = ffmpeg(audioStream);
     const hasImage = fs.existsSync(tempImagePath);
-    // if (hasImage) {
-    //   ffmpegCommand = ffmpegCommand.input(tempImagePath);
-    // }
+
     ffmpegCommand.audioCodec("libmp3lame");
     ffmpegCommand.audioBitrate(`${quality}k`).format("mp3");
 
-    // 🚀 FIXED: Combined options strings using '=' assignment to prevent space-parsing shell arguments crashes
-    // if (hasImage) {
-    //   ffmpegCommand.outputOptions([
-    //     "-map",
-    //     "0:0", // Map input index 0 (yt-dlp raw audio stream channel)
-    //     "-map",
-    //     "1:0", // Map input index 1 (cached local image channel)
-    //     "-c:v",
-    //     "mjpeg", // Compress artwork using standard MJPEG video codec
-
-    //     // 🚀 FIXED: Combined the video filter flags cleanly to prevent index clashing argument errors
-    //     "-vf",
-    //     "scale=500:500:force_original_aspect_ratio=increase,crop=500:500",
-
-    //     "-id3v2_version",
-    //     "3", // Force ID3v2.3 tagging standard for Apple Music compatibility
-    //     "-metadata:s:v:0",
-    //     "title=Cover", // Clean metadata title window
-    //     "-metadata:s:v:0",
-    //     "comment=Artwork", // Clean metadata comment layout
-    //   ]);
-    // } else {
-    //   ffmpegCommand.outputOptions([
-    //     "-map",
-    //     "0:0", // Fallback: map only the first audio stream layer safely
-    //   ]);
-    // }
-
     if (hasImage) {
       ffmpegCommand = ffmpegCommand.input(tempImagePath);
-
       ffmpegCommand.outputOptions([
         "-map",
         "0:a:0",
@@ -365,6 +327,14 @@ app.get("/api/download-file", async (req, res) => {
         "attached_pic",
       ]);
     }
+
+    // Explicitly expose headers so background fetch can read filenames safely
+    res.setHeader("X-Download-ID", id);
+    res.setHeader(
+      "Access-Control-Expose-Headers",
+      "X-Download-ID, Content-Disposition",
+    );
+
     ffmpegCommand
       .on("progress", (progress) => {
         if (meta.duration > 0 && progress.timemark) {
@@ -376,24 +346,18 @@ app.get("/api/download-file", async (req, res) => {
 
           let percent = Math.round((secondsProcessed / meta.duration) * 100);
           progressTracker[id] = Math.min(Math.max(percent, 0), 99);
+          console.log(`Conversion progress [${id}]: ${percent}%`);
         }
-      })
-      .on("stderr", (line) => {
-        console.log("FFMPEG STDERR:", line);
       })
       .on("error", (error) => {
         console.error("FFMPEG ERROR:", error.message);
-        console.error("FFMPEG DETAILS:", error);
-        if (fs.existsSync(tempFilePath)) {
-          fs.unlinkSync(tempFilePath);
-        }
-        if (!res.headersSent) {
-          res.status(500).send("Audio compilation failed.");
-        }
+        delete progressTracker[id];
+        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+        if (!res.headersSent) res.status(500).send("Audio compilation failed.");
       })
-      .save(tempFilePath)
       .on("end", () => {
-        console.log("FFMPEG Conversion Complete with Artwork Embedded!");
+        console.log("FFMPEG Conversion Complete!");
         progressTracker[id] = 100;
 
         res.setHeader(
@@ -405,32 +369,15 @@ app.get("/api/download-file", async (req, res) => {
         fs.createReadStream(tempFilePath)
           .pipe(res)
           .on("finish", () => {
-            // 3. Cleanup Step: Delete BOTH local temp file assets off your server disk space
-            fs.unlink(tempFilePath, (err) => {
-              if (err) console.error("Audio cleanup error:", err);
-
-              if (fs.existsSync(tempImagePath)) {
-                fs.unlink(tempImagePath, (imgErr) => {
-                  if (imgErr) console.error("Image cleanup error:", imgErr);
-                  else
-                    console.log(
-                      "Temporary file workspace scrubbed successfully.",
-                    );
-                });
-              }
-              delete progressTracker[id + "-meta"];
-            });
+            fs.unlink(tempFilePath, () => {});
+            if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+            delete progressTracker[id + "-meta"];
           });
-      });
-    // .on("error", (error) => {
-    //   console.error("FFMPEG Error:", error.message);
-    //   delete progressTracker[id];
-    //   if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    //   if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
-    //   if (!res.headersSent) res.status(500).send("Audio compilation failed.");
-    // });
+      })
+      .save(tempFilePath);
   } catch (error) {
     console.error("Streaming error:", error.message);
+    delete progressTracker[id];
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
   }
