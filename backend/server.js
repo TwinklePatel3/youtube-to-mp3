@@ -246,8 +246,11 @@ app.get("/api/download-file", async (req, res) => {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 150);
-  const tempFilename = `${safeTitle}-${quality}kbps.mp3`;
-  // const tempFilePath = path.join(__dirname, tempFilename);
+  const tempFilename = `download-${id}-${quality}kbps.mp3`;
+
+  const tempFilePath = path.join(__dirname, tempFilename);
+
+  console.log("FFmpeg output path:", tempFilePath);
 
   const rawImagePath = path.join(__dirname, `raw-thumb-${id}.jpg`);
 
@@ -258,7 +261,6 @@ app.get("/api/download-file", async (req, res) => {
     fs.mkdirSync(tempDir, { recursive: true });
   }
 
-  const tempFilePath = path.join(tempDir, tempFilename);
   let hasImage = false;
 
   try {
@@ -606,13 +608,20 @@ app.get("/api/download-file", async (req, res) => {
 
           console.log("Temporary files cleaned successfully.");
         });
-      })
+      });
+    console.log("========== FINAL FFMPEG OUTPUT ==========");
 
-      // =======================================================
-      // 15. SAVE FINAL MP3
-      // =======================================================
+    console.log("tempFilename:", tempFilename);
+    console.log("tempFilePath:", tempFilePath);
+    console.log("quality:", quality);
+    console.log("url:", url);
 
-      .save(tempFilePath);
+    console.log("=========================================");
+
+    ffmpegCommand.save(tempFilePath);
+    // =======================================================
+    // 15. SAVE FINAL MP3
+    // =======================================================
   } catch (error) {
     console.error("Streaming error:", error.message);
 
