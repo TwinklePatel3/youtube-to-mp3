@@ -264,7 +264,7 @@ app.get("/api/download-file", async (req, res) => {
     }
 
     // This dynamically inserts the extracted video ID into the high-res 4000x4000 link structure
-    targetCoverUrl = `https://googleusercontent.com{extractedId}=w4000-h4000-l90-rj`;
+    targetCoverUrl = `https://googleusercontent.com${extractedId}=w4000-h4000-l90-rj`;
     console.log(
       `Targeting ultra high-resolution 1:1 canvas server: ${targetCoverUrl}`,
     );
@@ -279,7 +279,7 @@ app.get("/api/download-file", async (req, res) => {
           "YT Music cover server missed target. Fetching base metadata thumbnail layout instead...",
         );
         imgRes = await fetch(
-          meta.cover || `https://youtube.com{extractedId}/maxresdefault.jpg`,
+          meta.cover || `https://youtube.com${extractedId}/maxresdefault.jpg`,
         );
       }
 
