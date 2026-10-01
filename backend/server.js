@@ -486,7 +486,14 @@ app.get("/api/download-file", async (req, res) => {
     // 8. FFMPEG PROGRESS
     // =========================================================
 
+    ffmpegCommand;
     ffmpegCommand
+      .on("start", (commandLine) => {
+        console.log("========== ACTUAL FFMPEG COMMAND ==========");
+        console.log(commandLine);
+        console.log("===========================================");
+      })
+
       .on("progress", (progress) => {
         if (meta.duration > 0 && progress.timemark) {
           const timeParts = progress.timemark.split(":");
