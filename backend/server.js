@@ -239,191 +239,340 @@ app.get("/api/download-file", async (req, res) => {
   }
 
   const { meta, url, quality } = progressTracker[id + "-meta"];
+
   const tempFilename = `${meta.title}-${quality}kbps.mp3`;
   const tempFilePath = path.join(__dirname, tempFilename);
+
   const rawImagePath = path.join(__dirname, `raw-thumb-${id}.jpg`);
   const optimizedImagePath = path.join(__dirname, `thumb-${id}.jpg`);
 
   let hasImage = false;
 
   try {
-    // 1. Target High-Resolution YouTube Music Cover Database Assets
-    let targetCoverUrl = meta.cover;
+    // =========================================================
+    // 1. EXTRACT YOUTUBE VIDEO ID
+    // =========================================================
 
-    // 👇 PASTE THE EXACT CODE BLOCK HERE 👇
-    let extractedId = "_4Ft9UIKzwk";
+    let extractedId = null;
+
     try {
-      if (url.includes("youtu.be/")) {
-        extractedId = url.split("youtu.be/")[1].split(/[?#]/)[0];
-      } else if (url.includes("v=")) {
-        const urlObj = new URL(url);
-        extractedId = urlObj.searchParams.get("v") || extractedId;
+      const urlObj = new URL(url);
+
+      if (urlObj.hostname.includes("youtu.be")) {
+        extractedId = urlObj.pathname.slice(1).split("/")[0];
+      } else if (urlObj.hostname.includes("youtube.com")) {
+        extractedId = urlObj.searchParams.get("v");
       }
     } catch (e) {
-      console.error("ID layout mismatch, using safe default fallback.");
+      console.error("Could not extract YouTube video ID:", e.message);
     }
 
-    // This dynamically inserts the extracted video ID into the high-res 4000x4000 link structure
-    targetCoverUrl = `https://googleusercontent.com${extractedId}=w4000-h4000-l90-rj`;
-    console.log(
-      `Targeting ultra high-resolution 1:1 canvas server: ${targetCoverUrl}`,
-    );
+    if (!extractedId) {
+      throw new Error("Could not determine YouTube video ID.");
+    }
 
-    // 2. Fetch the target asset file stream container down onto the machine drive disk space
+    console.log(`YouTube Video ID: ${extractedId}`);
+
+    // =========================================================
+    // 2. GET HIGH-RES YOUTUBE THUMBNAIL
+    // =========================================================
+
+    let targetCoverUrl = `https://i.ytimg.com/vi/${extractedId}/maxresdefault.jpg`;
+
+    console.log(`Targeting high-resolution thumbnail: ${targetCoverUrl}`);
+
     try {
       let imgRes = await fetch(targetCoverUrl);
 
-      // Fallback if the official high-res square cover doesn't exist
+      // -------------------------------------------------------
+      // FALLBACK 1: sddefault
+      // -------------------------------------------------------
+
       if (!imgRes.ok) {
-        console.log(
-          "YT Music cover server missed target. Fetching base metadata thumbnail layout instead...",
-        );
-        imgRes = await fetch(
-          meta.cover || `https://youtube.com${extractedId}/maxresdefault.jpg`,
-        );
+        console.log("maxresdefault unavailable. Trying sddefault...");
+
+        targetCoverUrl = `https://i.ytimg.com/vi/${extractedId}/sddefault.jpg`;
+
+        imgRes = await fetch(targetCoverUrl);
+      }
+
+      // -------------------------------------------------------
+      // FALLBACK 2: hqdefault
+      // -------------------------------------------------------
+
+      if (!imgRes.ok) {
+        console.log("sddefault unavailable. Trying hqdefault...");
+
+        targetCoverUrl = `https://i.ytimg.com/vi/${extractedId}/hqdefault.jpg`;
+
+        imgRes = await fetch(targetCoverUrl);
       }
 
       if (imgRes.ok) {
         const arrayBuffer = await imgRes.arrayBuffer();
+
         fs.writeFileSync(rawImagePath, Buffer.from(arrayBuffer));
 
-        // Sharp 1:1 square master artwork processing layout
+        console.log(`Original artwork downloaded from: ${targetCoverUrl}`);
+
+        // =====================================================
+        // 3. CREATE EXACT 4000 x 4000 SQUARE ARTWORK
+        // =====================================================
+
         await sharp(rawImagePath)
           .resize(4000, 4000, {
             fit: "cover",
             position: "centre",
           })
-          .toFormat("jpeg", {
+          .jpeg({
             quality: 95,
             progressive: false,
           })
           .toFile(optimizedImagePath);
 
         hasImage = true;
-        console.log(
-          "Ultra high-res 4000x4000 1:1 square master artwork file built successfully.",
-        );
+
+        console.log("4000x4000 square artwork created successfully.");
+      } else {
+        console.error("Could not download any YouTube thumbnail.");
       }
     } catch (imgErr) {
-      console.error("Failed to compile thumbnail stream:", imgErr.message);
+      console.error("Failed to download/process artwork:", imgErr.message);
     }
 
+    // =========================================================
+    // 4. CREATE AUDIO STREAM
+    // =========================================================
+
     const audioStream = streamAudio(url);
+
     if (!audioStream) {
       throw new Error(
         "Failed to initialize system yt-dlp audio stream pipeline.",
       );
     }
 
+    // =========================================================
+    // 5. FFMPEG
+    // =========================================================
+
     let ffmpegCommand = ffmpeg(audioStream);
-    ffmpegCommand.audioCodec("libmp3lame");
-    ffmpegCommand.audioBitrate(`${quality}k`).format("mp3");
+
+    ffmpegCommand
+      .audioCodec("libmp3lame")
+      .audioBitrate(`${quality}k`)
+      .format("mp3");
+
+    // =========================================================
+    // 6. ADD COVER ART
+    // =========================================================
 
     if (hasImage && fs.existsSync(optimizedImagePath)) {
       ffmpegCommand = ffmpegCommand.input(optimizedImagePath);
+
       ffmpegCommand.outputOptions([
         "-map",
         "0:a:0",
+
         "-map",
         "1:v:0",
+
         "-c:v",
         "mjpeg",
+
         "-id3v2_version",
         "3",
+
         "-metadata:s:v:0",
         "title=Cover",
+
         "-metadata:s:v:0",
         "comment=Cover",
+
         "-disposition:v:0",
         "attached_pic",
       ]);
     }
 
+    // =========================================================
+    // 7. RESPONSE HEADERS
+    // =========================================================
+
     res.setHeader("X-Download-ID", id);
+
     res.setHeader(
       "Access-Control-Expose-Headers",
       "X-Download-ID, Content-Disposition",
     );
 
+    // =========================================================
+    // 8. FFMPEG PROGRESS
+    // =========================================================
+
     ffmpegCommand
       .on("progress", (progress) => {
         if (meta.duration > 0 && progress.timemark) {
           const timeParts = progress.timemark.split(":");
+
           const secondsProcessed =
             parseFloat(timeParts[0]) * 3600 +
             parseFloat(timeParts[1]) * 60 +
             parseFloat(timeParts[2]);
 
           let percent = Math.round((secondsProcessed / meta.duration) * 100);
+
           progressTracker[id] = Math.min(Math.max(percent, 0), 99);
+
+          console.log(`Download progress: ${progressTracker[id]}%`);
         }
       })
+
+      // =======================================================
+      // 9. FFMPEG ERROR
+      // =======================================================
+
       .on("error", (error) => {
         console.error("FFMPEG ERROR:", error.message);
-        delete progressTracker[id];
-        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
-        if (fs.existsSync(optimizedImagePath))
-          fs.unlinkSync(optimizedImagePath);
-        if (!res.headersSent) res.status(500).send("Audio compilation failed.");
-      })
-      .on("end", () => {
-        console.log(
-          "FFMPEG Conversion Success! Injecting High-Res ID3 frames...",
-        );
 
-        const tags = { title: meta.title, artist: "YouTube Downloader" };
+        delete progressTracker[id];
+
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+        }
+
+        if (fs.existsSync(rawImagePath)) {
+          fs.unlinkSync(rawImagePath);
+        }
+
+        if (fs.existsSync(optimizedImagePath)) {
+          fs.unlinkSync(optimizedImagePath);
+        }
+
+        if (!res.headersSent) {
+          res.status(500).send("Audio compilation failed.");
+        }
+      })
+
+      // =======================================================
+      // 10. FFMPEG FINISHED
+      // =======================================================
+
+      .on("end", () => {
+        console.log("FFMPEG Conversion Success!");
+
+        // =====================================================
+        // 11. ADD ID3 TAGS
+        // =====================================================
+
+        const tags = {
+          title: meta.title,
+          artist: meta.artist || meta.channel || "YouTube Downloader",
+        };
 
         if (hasImage && fs.existsSync(optimizedImagePath)) {
           tags.image = {
             mime: "image/jpeg",
-            type: { id: 3, name: "front cover" },
+
+            type: {
+              id: 3,
+              name: "front cover",
+            },
+
             description: "Cover Art",
+
             imageBuffer: fs.readFileSync(optimizedImagePath),
           };
         }
 
         const success = nodeID3.write(tags, tempFilePath);
-        if (success) console.log("4000x4000 ID3 embedded successfully!");
+
+        if (success) {
+          console.log("4000x4000 ID3 cover art embedded successfully!");
+        } else {
+          console.error("Failed to write ID3 tags.");
+        }
+
+        // =====================================================
+        // 12. COMPLETE PROGRESS
+        // =====================================================
 
         progressTracker[id] = 100;
+
+        // =====================================================
+        // 13. DOWNLOAD RESPONSE
+        // =====================================================
 
         res.setHeader(
           "Content-Disposition",
           `attachment; filename="${encodeURIComponent(tempFilename)}"`,
         );
+
         res.setHeader("Content-Type", "audio/mpeg");
 
         const fileStream = fs.createReadStream(tempFilePath);
 
         fileStream.on("error", (streamErr) => {
-          console.error(
-            `Silent stream transmission error: ${streamErr.message}`,
-          );
-          if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-          if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
-          if (fs.existsSync(optimizedImagePath))
+          console.error("Silent stream transmission error:", streamErr.message);
+
+          if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+          }
+
+          if (fs.existsSync(rawImagePath)) {
+            fs.unlinkSync(rawImagePath);
+          }
+
+          if (fs.existsSync(optimizedImagePath)) {
             fs.unlinkSync(optimizedImagePath);
+          }
+
           delete progressTracker[id + "-meta"];
         });
 
         fileStream.pipe(res).on("finish", () => {
-          if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-          if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
-          if (fs.existsSync(optimizedImagePath))
+          if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath);
+          }
+
+          if (fs.existsSync(rawImagePath)) {
+            fs.unlinkSync(rawImagePath);
+          }
+
+          if (fs.existsSync(optimizedImagePath)) {
             fs.unlinkSync(optimizedImagePath);
+          }
+
           delete progressTracker[id + "-meta"];
-          console.log("Temporary file cache workspace scrubbed successfully.");
+
+          console.log("Temporary files cleaned successfully.");
         });
       })
+
+      // =======================================================
+      // 14. SAVE MP3
+      // =======================================================
+
       .save(tempFilePath);
   } catch (error) {
     console.error("Streaming error:", error.message);
+
     delete progressTracker[id];
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
-    if (fs.existsSync(optimizedImagePath)) fs.unlinkSync(optimizedImagePath);
-    if (!res.headersSent) res.status(400).send(error.message);
+
+    if (fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+
+    if (fs.existsSync(rawImagePath)) {
+      fs.unlinkSync(rawImagePath);
+    }
+
+    if (fs.existsSync(optimizedImagePath)) {
+      fs.unlinkSync(optimizedImagePath);
+    }
+
+    if (!res.headersSent) {
+      res.status(400).send(error.message);
+    }
   }
 });
 
