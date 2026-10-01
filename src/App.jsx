@@ -228,41 +228,41 @@ function App() {
                 const targetId = await requestDownload(url, quality);
 
                 if (targetId) {
-                  console.log("Opening streaming chunks consumer pipeline...");
-
-                  // 2. Fetch the live file stream from the backend
-                  const response = await fetch(
-                    `http://127.0.0{encodeURIComponent(url)}&quality=${quality}&id=${targetId}`,
+                  console.log(
+                    "Opening non-blocking parallel downloader thread context...",
                   );
+                  setError("");
 
-                  if (!response.ok)
-                    throw new Error("Audio file transmission dropped.");
+                  // 2. Build the exact full-path target URL for your file stream
+                  const fileStreamUrl = `https://youtube-to-mp3-rhww.onrender.com/${encodeURIComponent(url)}&quality=${quality}&id=${targetId}`;
 
-                  // 🚀 THE KEY FIX: Read the stream chunk-by-chunk in real time without blocking the UI thread
-                  const reader = response.body.getReader();
-                  const chunks = [];
-
-                  while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    if (value) chunks.push(value);
+                  // 🚀 THE CRITICAL FIX FOR 0% PROGRESS BAR & PROMPT:
+                  // We route the download through an isolated iframe structure rather than standard blocking JavaScript fetch loops.
+                  // This completely unblocks the page thread, forcing the browser to natively prompt "Save As"
+                  // while letting your EventSource connect parallel lines to update the progress bar from 0% to 100%!
+                  let downloadFrame = document.getElementById(
+                    "hidden-downloader-frame",
+                  );
+                  if (!downloadFrame) {
+                    downloadFrame = document.createElement("iframe");
+                    downloadFrame.id = "hidden-downloader-frame";
+                    downloadFrame.style.display = "none";
+                    document.body.appendChild(downloadFrame);
                   }
 
-                  // 3. Assemble all the downloaded chunks back into a single MP3 file container
-                  const blob = new Blob(chunks, { type: "audio/mpeg" });
-                  const downloadUrl = URL.createObjectURL(blob);
+                  // Hand the download execution task directly to the browser window context layout
+                  downloadFrame.src = fileStreamUrl;
 
-                  // 4. Trigger standard browser save dialog prompt behavior
-                  const link = document.createElement("a");
-                  link.href = downloadUrl;
-                  link.download = `${songData.title}.mp3`;
-
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-
-                  URL.revokeObjectURL(downloadUrl);
-                  console.log("Audio track downloaded successfully.");
+                  // Create a background listener interface loop to auto-clear the loader state upon completion
+                  const checkCompletionInterval = setInterval(() => {
+                    if (progress >= 100) {
+                      setIsDownloading(false);
+                      clearInterval(checkCompletionInterval);
+                      console.log(
+                        "Audio track downloaded successfully with 4000x4000 master square artwork!",
+                      );
+                    }
+                  }, 1000);
                 }
               } catch (err) {
                 setError(err.message);
