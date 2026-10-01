@@ -261,8 +261,9 @@ app.get("/api/download-file", async (req, res) => {
 
   const { meta, url, quality } = progressTracker[id + "-meta"];
   // const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
-  const tempFilename = `${meta.title}-${quality}kbps.mp3`;
+  const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
 
+  const tempFilename = `${safeFilename}-${quality}kbps.mp3`;
   // const tempFilename = `${safeFilename}.mp3`;
 
   const tempFilePath = path.join(__dirname, tempFilename);
@@ -488,7 +489,8 @@ app.get("/api/download-file", async (req, res) => {
     // =========================================================
     // FFMPEG EVENTS
     // =========================================================
-
+    let lastFFmpegPercent = 0;
+    let progressTimer = null;
     ffmpegCommand
 
       .on("start", (commandLine) => {
@@ -497,12 +499,30 @@ app.get("/api/download-file", async (req, res) => {
         console.log("==================================");
 
         progressTracker[id] = 0;
+
+        progressTimer = setInterval(() => {
+          const current = progressTracker[id] ?? 0;
+
+          // Don't artificially go backwards
+          if (current > lastFFmpegPercent) {
+            lastFFmpegPercent = current;
+          }
+
+          progressTracker[id] = lastFFmpegPercent;
+        }, 500);
       })
 
       .on("progress", (progress) => {
         console.log("RAW FFMPEG PROGRESS:", progress);
 
-        if (progress.timemark && meta.duration) {
+        let percent = 0;
+
+        if (
+          typeof progress.percent === "number" &&
+          Number.isFinite(progress.percent)
+        ) {
+          percent = Math.round(progress.percent);
+        } else if (progress.timemark && Number(meta.duration) > 0) {
           const timeParts = progress.timemark.split(":");
 
           const hours = parseFloat(timeParts[0]) || 0;
@@ -511,24 +531,27 @@ app.get("/api/download-file", async (req, res) => {
 
           const secondsProcessed = hours * 3600 + minutes * 60 + seconds;
 
-          const duration = Number(meta.duration);
-
-          if (duration > 0) {
-            const percent = Math.min(
-              Math.max(Math.round((secondsProcessed / duration) * 100), 0),
-              99,
-            );
-
-            progressTracker[id] = percent;
-
-            console.log(
-              `FFMPEG progress ${id}: ${percent}% | ${progress.timemark}`,
-            );
-          }
+          percent = Math.round(
+            (secondsProcessed / Number(meta.duration)) * 100,
+          );
         }
-      })
 
+        percent = Math.min(Math.max(percent, 0), 99);
+
+        lastFFmpegPercent = percent;
+        progressTracker[id] = percent;
+
+        console.log(
+          `FFMPEG progress ${id}: ${percent}% | ${progress.timemark}`,
+        );
+      })
       .on("error", (error) => {
+        console.error("FFMPEG ERROR:", error.message);
+        if (progressTimer) {
+          clearInterval(progressTimer);
+          progressTimer = null;
+        }
+
         console.error("FFMPEG ERROR:", error.message);
 
         delete progressTracker[id];
@@ -554,17 +577,18 @@ app.get("/api/download-file", async (req, res) => {
 
       .on("end", () => {
         console.log("FFMPEG Conversion Success!");
+        if (progressTimer) {
+          clearInterval(progressTimer);
+          progressTimer = null;
+        }
 
         // IMPORTANT: only here do we set 100%
         progressTracker[id] = 100;
 
         console.log(`FFMPEG progress ${id}: 100%`);
-
         res.setHeader(
           "Content-Disposition",
-          `attachment; filename="song.mp3"; filename*=UTF-8''${encodeURIComponent(
-            tempFilename,
-          )}`,
+          `attachment; filename="${tempFilename}"; filename*=UTF-8''${encodeURIComponent(tempFilename)}`,
         );
 
         res.setHeader("Content-Type", "audio/mpeg");
