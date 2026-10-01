@@ -265,26 +265,33 @@ app.get("/api/download-file", async (req, res) => {
 
         const originalImage = fs.readFileSync(tempImagePath);
 
-        // Create a blurred background that fills the square.
+        // Create a blurred square background.
         const background = await sharp(originalImage)
           .resize(500, 500, { fit: "cover" })
-          .blur(25)
-          .jpeg()
+          .blur(30)
+          .jpeg({ quality: 90 })
           .toBuffer();
 
-        // Keep the complete original artwork visible.
+        // Resize the original image without adding transparent padding.
         const foreground = await sharp(originalImage)
-          .resize(500, 500, {
-            fit: "contain",
-            background: { r: 0, g: 0, b: 0, alpha: 0 },
+          .resize({
+            width: 500,
+            height: 500,
+            fit: "inside",
+            withoutEnlargement: false,
           })
           .png()
           .toBuffer();
 
-        // Combine both layers into one square image.
+        // Overlay the complete image in the center of the background.
         const finalArtwork = await sharp(background)
-          .composite([{ input: foreground }])
-          .jpeg({ quality: 90 })
+          .composite([
+            {
+              input: foreground,
+              gravity: "centre",
+            },
+          ])
+          .jpeg({ quality: 95 })
           .toBuffer();
 
         fs.writeFileSync(tempImagePath, finalArtwork);

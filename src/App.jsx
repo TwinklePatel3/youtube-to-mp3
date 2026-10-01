@@ -183,7 +183,7 @@ function App() {
           <img
             src={songData.thumbnail}
             alt="Selected preview"
-            className="aspect-square w-full rounded-xl  "
+            className="aspect-square w-full rounded-xl"
           />
 
           <h2 className="mt-6 text-xl font-bold"> {songData.title}</h2>
