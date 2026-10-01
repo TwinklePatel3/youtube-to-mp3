@@ -376,6 +376,10 @@ app.get("/api/download-file", async (req, res) => {
     // 4. CREATE FFMPEG COMMAND
     // =========================================================
 
+    // =========================================================
+    // FFMPEG AUDIO SETTINGS
+    // =========================================================
+
     let ffmpegCommand = ffmpeg(audioStream);
 
     ffmpegCommand
@@ -384,68 +388,60 @@ app.get("/api/download-file", async (req, res) => {
       .format("mp3");
 
     // =========================================================
-    // 5. METADATA
+    // CLEAN METADATA VALUES
     // =========================================================
 
-    const title = meta.title || "Unknown Title";
+    const title = String(meta.title || "Unknown Title")
+      .replace(/[\r\n]/g, " ")
+      .trim();
 
-    const artist =
-      meta.artist || meta.channel || meta.singer || "YouTube Downloader";
+    const artist = String(
+      meta.artist || meta.channel || meta.singer || "YouTube Downloader",
+    )
+      .replace(/[\r\n]/g, " ")
+      .trim();
 
-    const album = meta.album || "YouTube Downloads";
+    const album = String(meta.album || "YouTube Downloads")
+      .replace(/[\r\n]/g, " ")
+      .trim();
+
+    // =========================================================
+    // METADATA
+    // IMPORTANT: each -metadata option is kept as ONE argument
+    // =========================================================
 
     ffmpegCommand.outputOptions([
-      "-id3v2_version",
-      "3",
+      "-id3v2_version 3",
+      "-write_id3v1 1",
 
-      "-write_id3v1",
-      "1",
-
-      "-metadata",
-      `title="${title.replace(/"/g, '\\"')}"`,
-
-      "-metadata",
-      `artist="${artist.replace(/"/g, '\\"')}"`,
-
-      "-metadata",
-      `album="${album.replace(/"/g, '\\"')}"`,
-
-      "-metadata",
-      `comment="YouTube Download"`,
+      `-metadata title=${title}`,
+      `-metadata artist=${artist}`,
+      `-metadata album=${album}`,
+      `-metadata comment=YouTube Download`,
     ]);
+
     // =========================================================
-    // 6. EMBED FRONT COVER
+    // EMBED COVER ART
     // =========================================================
 
     if (hasImage && fs.existsSync(optimizedImagePath)) {
-      console.log("Embedding JPEG artwork into MP3...");
+      console.log("Embedding artwork:", optimizedImagePath);
 
       ffmpegCommand = ffmpegCommand.input(optimizedImagePath);
 
       ffmpegCommand.outputOptions([
-        "-map",
-        "0:a:0",
+        "-map 0:a:0",
+        "-map 1:v:0",
 
-        "-map",
-        "1:v:0",
+        "-c:v mjpeg",
 
-        "-c:v",
-        "mjpeg",
+        "-id3v2_version 3",
 
-        "-id3v2_version",
-        "3",
+        "-metadata:s:v:0 title=Cover",
+        "-metadata:s:v:0 comment=Front Cover",
 
-        "-metadata:s:v:0",
-        'title="Cover"',
-
-        "-metadata:s:v:0",
-        'comment="Front Cover"',
-
-        "-disposition:v:0",
-        "attached_pic",
+        "-disposition:v:0 attached_pic",
       ]);
-
-      console.log("Apple Music-compatible front-cover configuration enabled.");
     } else {
       console.log("No artwork available. Creating audio-only MP3.");
     }
