@@ -380,74 +380,91 @@ app.get("/api/download-file", async (req, res) => {
     // FFMPEG AUDIO SETTINGS
     // =========================================================
 
+    // let ffmpegCommand = ffmpeg(audioStream);
+    // =========================================================
+    // FFMPEG COMMAND
+    // =========================================================
+
     let ffmpegCommand = ffmpeg(audioStream);
 
-    ffmpegCommand
-      .audioCodec("libmp3lame")
-      .audioBitrate(`${quality}k`)
-      .format("mp3");
-
     // =========================================================
-    // CLEAN METADATA VALUES
-    // =========================================================
-
-    const title = String(meta.title || "Unknown Title")
-      .replace(/[\r\n]/g, " ")
-      .trim();
-
-    const artist = String(
-      meta.artist || meta.channel || meta.singer || "YouTube Downloader",
-    )
-      .replace(/[\r\n]/g, " ")
-      .trim();
-
-    const album = String(meta.album || "YouTube Downloads")
-      .replace(/[\r\n]/g, " ")
-      .trim();
-
-    // =========================================================
-    // METADATA
-    // IMPORTANT: each -metadata option is kept as ONE argument
-    // =========================================================
-
-    ffmpegCommand.outputOptions([
-      "-id3v2_version 3",
-      "-write_id3v1 1",
-
-      `-metadata title=${title}`,
-      `-metadata artist=${artist}`,
-      `-metadata album=${album}`,
-      `-metadata comment=YouTube Download`,
-    ]);
-
-    // =========================================================
-    // EMBED COVER ART
+    // ADD ARTWORK AS INPUT
     // =========================================================
 
     if (hasImage && fs.existsSync(optimizedImagePath)) {
       console.log("Embedding artwork:", optimizedImagePath);
 
-      ffmpegCommand = ffmpegCommand.input(optimizedImagePath);
-
-      ffmpegCommand.outputOptions([
-        "-map 0:a:0",
-        "-map 1:v:0",
-
-        "-c:v mjpeg",
-
-        "-id3v2_version 3",
-
-        "-metadata:s:v:0 title=Cover",
-        "-metadata:s:v:0 comment=Front Cover",
-
-        "-disposition:v:0 attached_pic",
-      ]);
+      ffmpegCommand.input(optimizedImagePath);
     } else {
       console.log("No artwork available. Creating audio-only MP3.");
     }
 
     // =========================================================
-    // 7. RESPONSE HEADERS
+    // OUTPUT
+    // =========================================================
+
+    ffmpegCommand
+      .output(tempFilePath)
+
+      .audioCodec("libmp3lame")
+      .audioBitrate(`${quality}k`)
+
+      .outputOptions(
+        "-f",
+        "mp3",
+
+        // =====================================================
+        // ID3 METADATA
+        // =====================================================
+
+        "-id3v2_version",
+        "3",
+
+        "-metadata",
+        `title=${title}`,
+
+        "-metadata",
+        `artist=${artist}`,
+
+        "-metadata",
+        `album=${album}`,
+
+        "-metadata",
+        "comment=YouTube Download",
+
+        // =====================================================
+        // AUDIO
+        // =====================================================
+
+        "-map",
+        "0:a:0",
+      );
+
+    // =========================================================
+    // COVER ART
+    // =========================================================
+
+    if (hasImage && fs.existsSync(optimizedImagePath)) {
+      ffmpegCommand.outputOptions(
+        "-map",
+        "1:v:0",
+
+        "-c:v",
+        "mjpeg",
+
+        "-metadata:s:v:0",
+        "title=Cover",
+
+        "-metadata:s:v:0",
+        "comment=Front Cover",
+
+        "-disposition:v:0",
+        "attached_pic",
+      );
+    }
+
+    // =========================================================
+    // RESPONSE HEADERS
     // =========================================================
 
     res.setHeader("X-Download-ID", id);
@@ -458,25 +475,33 @@ app.get("/api/download-file", async (req, res) => {
     );
 
     // =========================================================
-    // 8. FFMPEG PROGRESS
+    // FFMPEG EVENTS
     // =========================================================
 
-    ffmpegCommand;
     ffmpegCommand
+
+      // =======================================================
+      // START
+      // =======================================================
+
       .on("start", (commandLine) => {
         console.log("========== ACTUAL FFMPEG COMMAND ==========");
+
         console.log(commandLine);
+
         console.log("===========================================");
       })
+
+      // =======================================================
+      // PROGRESS
+      // =======================================================
 
       .on("progress", (progress) => {
         if (meta.duration > 0 && progress.timemark) {
           const timeParts = progress.timemark.split(":");
 
           const hours = parseFloat(timeParts[0]) || 0;
-
           const minutes = parseFloat(timeParts[1]) || 0;
-
           const seconds = parseFloat(timeParts[2]) || 0;
 
           const secondsProcessed = hours * 3600 + minutes * 60 + seconds;
@@ -490,7 +515,7 @@ app.get("/api/download-file", async (req, res) => {
       })
 
       // =======================================================
-      // 9. FFMPEG ERROR
+      // ERROR
       // =======================================================
 
       .on("error", (error) => {
@@ -498,14 +523,17 @@ app.get("/api/download-file", async (req, res) => {
 
         delete progressTracker[id];
 
+        // Delete MP3
         if (fs.existsSync(tempFilePath)) {
           fs.unlinkSync(tempFilePath);
         }
 
+        // Delete raw artwork
         if (fs.existsSync(rawImagePath)) {
           fs.unlinkSync(rawImagePath);
         }
 
+        // Delete optimized artwork
         if (fs.existsSync(optimizedImagePath)) {
           fs.unlinkSync(optimizedImagePath);
         }
@@ -516,7 +544,7 @@ app.get("/api/download-file", async (req, res) => {
       })
 
       // =======================================================
-      // 10. FFMPEG SUCCESS
+      // SUCCESS
       // =======================================================
 
       .on("end", () => {
@@ -525,13 +553,13 @@ app.get("/api/download-file", async (req, res) => {
         console.log("MP3 created with embedded artwork and ID3v2.3 metadata.");
 
         // =====================================================
-        // 11. PROGRESS = 100
+        // PROGRESS 100%
         // =====================================================
 
         progressTracker[id] = 100;
 
         // =====================================================
-        // 12. SEND MP3 TO CLIENT
+        // RESPONSE HEADERS
         // =====================================================
 
         res.setHeader(
@@ -541,10 +569,14 @@ app.get("/api/download-file", async (req, res) => {
 
         res.setHeader("Content-Type", "audio/mpeg");
 
+        // =====================================================
+        // READ MP3
+        // =====================================================
+
         const fileStream = fs.createReadStream(tempFilePath);
 
         // =====================================================
-        // 13. FILE STREAM ERROR
+        // FILE STREAM ERROR
         // =====================================================
 
         fileStream.on("error", (streamErr) => {
@@ -566,13 +598,13 @@ app.get("/api/download-file", async (req, res) => {
         });
 
         // =====================================================
-        // 14. SEND FILE
+        // SEND FILE
         // =====================================================
 
         fileStream.pipe(res).on("finish", () => {
-          // -------------------------------------------------
-          // CLEAN TEMPORARY FILES
-          // -------------------------------------------------
+          // =================================================
+          // CLEAN TEMP FILES
+          // =================================================
 
           if (fs.existsSync(tempFilePath)) {
             fs.unlinkSync(tempFilePath);
@@ -591,19 +623,32 @@ app.get("/api/download-file", async (req, res) => {
           console.log("Temporary files cleaned successfully.");
         });
       });
+
+    // =========================================================
+    // DEBUG
+    // =========================================================
+
     console.log("========== FINAL FFMPEG OUTPUT ==========");
 
     console.log("tempFilename:", tempFilename);
+
     console.log("tempFilePath:", tempFilePath);
+
     console.log("quality:", quality);
+
     console.log("url:", url);
+
+    console.log("hasImage:", hasImage);
+
+    console.log("optimizedImagePath:", optimizedImagePath);
 
     console.log("=========================================");
 
-    ffmpegCommand.save(tempFilePath);
-    // =======================================================
-    // 15. SAVE FINAL MP3
-    // =======================================================
+    // =========================================================
+    // START FFMPEG — ONLY ONCE
+    // =========================================================
+
+    ffmpegCommand.run();
   } catch (error) {
     console.error("Streaming error:", error.message);
 
