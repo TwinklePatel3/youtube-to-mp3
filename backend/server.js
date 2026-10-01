@@ -384,7 +384,7 @@ app.get("/api/download-file", async (req, res) => {
     // =========================================================
     // FFMPEG COMMAND
     // =========================================================
-    const data = await getYouTubeMetadata(youtubeUrl);
+    const data = await getYouTubeMetadata(url);
 
     const title = data.title || "Unknown Title";
     const artist = data.artist || "Unknown Artist";
