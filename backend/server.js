@@ -240,13 +240,9 @@ app.get("/api/download-file", async (req, res) => {
   }
 
   const { meta, url, quality } = progressTracker[id + "-meta"];
-  const safeTitle = String(meta.title || "YouTube Song")
-    .replace(/[\/\\?%*:|"<>]/g, "-")
-    .replace(/[\x00-\x1F\x80-\x9F]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 150);
-  const tempFilename = `download-${id}-${quality}kbps.mp3`;
+  const safeFilename = title.replace(/[\/\\:*?"<>]/g, "").trim();
+
+  const tempFilename = `${safeFilename}.mp3`;
 
   const tempFilePath = path.join(__dirname, tempFilename);
 
