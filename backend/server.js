@@ -515,14 +515,7 @@ app.get("/api/download-file", async (req, res) => {
       .on("progress", (progress) => {
         console.log("RAW FFMPEG PROGRESS:", progress);
 
-        let percent = 0;
-
-        if (
-          typeof progress.percent === "number" &&
-          Number.isFinite(progress.percent)
-        ) {
-          percent = Math.round(progress.percent);
-        } else if (progress.timemark && Number(meta.duration) > 0) {
+        if (progress.timemark && Number(meta.duration) > 0) {
           const timeParts = progress.timemark.split(":");
 
           const hours = parseFloat(timeParts[0]) || 0;
@@ -531,19 +524,19 @@ app.get("/api/download-file", async (req, res) => {
 
           const secondsProcessed = hours * 3600 + minutes * 60 + seconds;
 
-          percent = Math.round(
-            (secondsProcessed / Number(meta.duration)) * 100,
+          const duration = Number(meta.duration);
+
+          const percent = Math.min(
+            Math.max(Math.round((secondsProcessed / duration) * 100), 0),
+            99,
+          );
+
+          progressTracker[id] = percent;
+
+          console.log(
+            `FFMPEG progress ${id}: ${percent}% | ${progress.timemark} / ${duration}s`,
           );
         }
-
-        percent = Math.min(Math.max(percent, 0), 99);
-
-        lastFFmpegPercent = percent;
-        progressTracker[id] = percent;
-
-        console.log(
-          `FFMPEG progress ${id}: ${percent}% | ${progress.timemark}`,
-        );
       })
       .on("error", (error) => {
         console.error("FFMPEG ERROR:", error.message);
