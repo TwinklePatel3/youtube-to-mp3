@@ -238,17 +238,28 @@ app.get("/api/download-file", async (req, res) => {
   if (!id || !progressTracker[id + "-meta"]) {
     return res.status(400).send("Invalid or expired session tracking ID");
   }
+  const safeTitle = String(meta.title || "YouTube Song")
+    .replace(/[\/\\?%*:|"<>]/g, "-")
+    .replace(/[\x00-\x1F\x80-\x9F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 150);
 
   const { meta, url, quality } = progressTracker[id + "-meta"];
 
-  const tempFilename = `${meta.title}-${quality}kbps.mp3`;
-
+  const tempFilename = `${safeTitle}-${quality}kbps.mp3`;
   const tempFilePath = path.join(__dirname, tempFilename);
 
   const rawImagePath = path.join(__dirname, `raw-thumb-${id}.jpg`);
 
   const optimizedImagePath = path.join(__dirname, `thumb-${id}.jpg`);
+  const tempDir = path.join(__dirname, "temp");
 
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+
+  const tempFilePath = path.join(tempDir, tempFilename);
   let hasImage = false;
 
   try {
