@@ -248,7 +248,7 @@ app.get("/api/download-file", async (req, res) => {
   const { meta, url, quality } = progressTracker[id + "-meta"];
 
   const tempFilename = `${safeTitle}-${quality}kbps.mp3`;
-  const tempFilePath = path.join(__dirname, tempFilename);
+  // const tempFilePath = path.join(__dirname, tempFilename);
 
   const rawImagePath = path.join(__dirname, `raw-thumb-${id}.jpg`);
 
