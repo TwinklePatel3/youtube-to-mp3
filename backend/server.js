@@ -384,7 +384,9 @@ app.get("/api/download-file", async (req, res) => {
     // =========================================================
     // FFMPEG COMMAND
     // =========================================================
-
+    const title = songData.title || "Unknown Title";
+    const artist = songData.artist || "Unknown Artist";
+    const album = "YouTube Downloads";
     let ffmpegCommand = ffmpeg(audioStream);
 
     // =========================================================
