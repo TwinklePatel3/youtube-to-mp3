@@ -6,6 +6,7 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const nodeID3 = require("node-id3");
+const sharp = require("sharp");
 
 app.use(cors());
 app.use(express.json());
@@ -258,6 +259,41 @@ app.get("/api/download-file", async (req, res) => {
       }
     }
 
+    if (fs.existsSync(tempImagePath)) {
+      try {
+        console.log("Preparing full square artwork...");
+
+        const originalImage = fs.readFileSync(tempImagePath);
+
+        // Create a blurred background that fills the square.
+        const background = await sharp(originalImage)
+          .resize(500, 500, { fit: "cover" })
+          .blur(25)
+          .jpeg()
+          .toBuffer();
+
+        // Keep the complete original artwork visible.
+        const foreground = await sharp(originalImage)
+          .resize(500, 500, {
+            fit: "contain",
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+          })
+          .png()
+          .toBuffer();
+
+        // Combine both layers into one square image.
+        const finalArtwork = await sharp(background)
+          .composite([{ input: foreground }])
+          .jpeg({ quality: 90 })
+          .toBuffer();
+
+        fs.writeFileSync(tempImagePath, finalArtwork);
+
+        console.log("Full square artwork prepared.");
+      } catch (error) {
+        console.error("Artwork processing failed:", error.message);
+      }
+    }
     const audioStream = await streamAudio(url);
     // console.log(audioStream, "audioStream");
     if (!audioStream)
