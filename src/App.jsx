@@ -13,6 +13,7 @@ function App() {
   const [downloadId, setDownloadId] = useState(null);
   const [progress, setProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [readyToSave, setReadyToSave] = useState(false); // 👈 Controls standard prompt state
 
   useEffect(() => {
     let eventSource = null;
@@ -36,6 +37,8 @@ function App() {
 
           if (data.progress >= 100) {
             setIsDownloading(false);
+            setReadyToSave(true); // 👈 1. Unlocks the prompt download link at 100%
+
             eventSource.close();
           }
         } catch (err) {
@@ -57,6 +60,7 @@ function App() {
   async function requestDownload(url, quality) {
     setIsDownloading(true);
     setProgress(0);
+    setReadyToSave(false);
     setDownloadId(null);
 
     try {
@@ -64,28 +68,38 @@ function App() {
         "https://youtube-to-mp3-rhww.onrender.com/api/download",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, quality }),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            url,
+            quality,
+          }),
         },
       );
 
       if (!response.ok) {
-        setIsDownloading(false);
         throw new Error("Download request failed");
       }
 
       const trackedId = response.headers.get("X-Download-ID");
-      console.log("Captured tracking target token:", trackedId);
 
-      if (trackedId) {
-        setDownloadId(trackedId); // 👈 Instantly triggers your useEffect progress listener!
+      console.log("Captured tracking ID:", trackedId);
+
+      if (!trackedId) {
+        throw new Error("Download ID was not returned");
       }
 
-      console.log("Session initialization confirmed status:", response.status);
-      return trackedId; // Return tracking ID instead of a heavy blocking blob array
+      setDownloadId(trackedId);
+
+      console.log("Session initialization confirmed:", response.status);
+
+      return trackedId;
     } catch (err) {
       setIsDownloading(false);
-      console.error("Network interface error occurred:", err.message);
+
+      console.error("Network interface error:", err.message);
+
       throw err;
     }
   }
@@ -200,78 +214,66 @@ function App() {
               <option value="320">320 kbps</option>
             </select>
           </label>
-          {isDownloading && (
+          {/* DYNAMIC PROGRESS INDICATOR */}
+          {(isDownloading || progress > 0) && (
             <div className="mt-4 w-full">
               <div className="flex justify-between text-sm font-semibold mb-1 text-gray-700">
-                <span>Transcoding File:</span>
+                <span>
+                  {progress >= 100
+                    ? "✨ Processing Complete!"
+                    : "⚡ Compiling Tracks:"}
+                </span>
                 <span>{progress}%</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
                 <div
-                  className="bg-green-500 h-2.5 rounded-full transition-all duration-300 ease-out"
+                  className="bg-green-500 h-2.5 rounded-full transition-all duration-300"
                   style={{ width: `${progress}%` }}
                 ></div>
               </div>
             </div>
           )}
 
-          <button
-            className={`mt-5 w-full rounded-lg px-6 py-3 font-semibold text-white transition-colors ${
-              isDownloading
-                ? "bg-gray-400 cursor-not-allowed"
-                : "bg-red-500 hover:bg-red-600 cursor-pointer"
-            }`}
-            disabled={isDownloading}
-            onClick={async () => {
-              try {
-                // 1. Fire the fast session handshake pass to generate the downloadId token
-                const targetId = await requestDownload(url, quality);
-
-                if (targetId) {
-                  console.log(
-                    "Opening non-blocking parallel downloader thread context...",
-                  );
-                  setError("");
-
-                  // 2. Build the exact full-path target URL for your file stream
-                  const fileStreamUrl = `https://youtube-to-mp3-rhww.onrender.com/${encodeURIComponent(url)}&quality=${quality}&id=${targetId}`;
-
-                  // 🚀 THE CRITICAL FIX FOR 0% PROGRESS BAR & PROMPT:
-                  // We route the download through an isolated iframe structure rather than standard blocking JavaScript fetch loops.
-                  // This completely unblocks the page thread, forcing the browser to natively prompt "Save As"
-                  // while letting your EventSource connect parallel lines to update the progress bar from 0% to 100%!
-                  let downloadFrame = document.getElementById(
-                    "hidden-downloader-frame",
-                  );
-                  if (!downloadFrame) {
-                    downloadFrame = document.createElement("iframe");
-                    downloadFrame.id = "hidden-downloader-frame";
-                    downloadFrame.style.display = "none";
-                    document.body.appendChild(downloadFrame);
-                  }
-
-                  // Hand the download execution task directly to the browser window context layout
-                  downloadFrame.src = fileStreamUrl;
-
-                  // Create a background listener interface loop to auto-clear the loader state upon completion
-                  const checkCompletionInterval = setInterval(() => {
-                    if (progress >= 100) {
-                      setIsDownloading(false);
-                      clearInterval(checkCompletionInterval);
-                      console.log(
-                        "Audio track downloaded successfully with 4000x4000 master square artwork!",
-                      );
-                    }
-                  }, 1000);
+          {/* TWO-PHASE CRASH-PROOF ACTION BUTTON */}
+          {!readyToSave ? (
+            <button
+              className={`mt-5 w-full rounded-lg px-6 py-3 font-semibold text-white ${isDownloading ? "bg-gray-400 cursor-not-allowed" : "bg-red-500 hover:bg-red-600"}`}
+              disabled={isDownloading}
+              onClick={async () => {
+                try {
+                  await requestDownload(url, quality);
+                } catch (err) {
+                  setError(err.message);
                 }
-              } catch (err) {
-                setError(err.message);
-                setIsDownloading(false);
+              }}
+            >
+              {isDownloading
+                ? `Processing Pipeline... (${progress}%)`
+                : "Convert & Process Artwork"}
+            </button>
+          ) : (
+            // 🚀 THE FIX FOR THE AUTOMATIC DOWNLOAD BUG:
+            // This normal anchor tag forces a true file payload request only AFTER compilation hits 100%,
+            // natively triggering your browser's "Save As" dialog prompt every time!
+            <a
+              href={
+                readyToSave
+                  ? `https://youtube-to-mp3-rhww.onrender.com/api/download-file/${downloadId}`
+                  : "#"
               }
-            }}
-          >
-            {isDownloading ? `Downloading... (${progress}%)` : "Download now"}
-          </button>
+              className="mt-5 block text-center w-full rounded-lg bg-green-600 px-6 py-3 font-semibold text-white hover:bg-green-700 transition-colors"
+              onClick={() => {
+                // Reset screen state back to default after the prompt box triggers
+                setTimeout(() => {
+                  setReadyToSave(false);
+                  setProgress(0);
+                  setDownloadId(null);
+                }, 2000);
+              }}
+            >
+              📥 Save Completed MP3 to Device
+            </a>
+          )}
         </section>
       )}
     </>

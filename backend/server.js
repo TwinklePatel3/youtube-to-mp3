@@ -206,27 +206,47 @@ app.post("/api/init", async (req, res) => {
 app.post("/api/download", async (req, res) => {
   const { url, quality } = req.body;
 
-  if (!url) return res.status(400).json({ error: "URL is required" });
-  if (quality !== "128" && quality !== "320")
-    return res.status(400).json({ error: "Invalid quality" });
+  if (!url) {
+    return res.status(400).json({
+      error: "URL is required",
+    });
+  }
+
+  if (quality !== "128" && quality !== "320") {
+    return res.status(400).json({
+      error: "Invalid quality",
+    });
+  }
 
   const downloadId = `dl-${Date.now()}`;
+
   progressTracker[downloadId] = 0;
 
   try {
     const meta = await fetchVideoMeta(url);
 
-    // Store metadata in global memory so the next GET route can access it
-    progressTracker[`${downloadId}-meta`] = { meta, url, quality };
+    progressTracker[`${downloadId}-meta`] = {
+      meta,
+      url,
+      quality,
+    };
 
-    // Send the tracking token back to React immediately so progress tracking starts!
     res.setHeader("X-Download-ID", downloadId);
+
     res.setHeader("Access-Control-Expose-Headers", "X-Download-ID");
-    return res.json({ success: true, downloadId });
+
+    return res.json({
+      success: true,
+      downloadId,
+    });
   } catch (error) {
     console.error("Initialization error:", error.message);
+
     delete progressTracker[downloadId];
-    return res.status(400).json({ error: error.message });
+
+    return res.status(400).json({
+      error: error.message,
+    });
   }
 });
 
@@ -240,10 +260,10 @@ app.get("/api/download-file", async (req, res) => {
   }
 
   const { meta, url, quality } = progressTracker[id + "-meta"];
-  const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
-  // const tempFilename = `${meta.title}-${quality}kbps.mp3`;
+  // const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
+  const tempFilename = `${meta.title}-${quality}kbps.mp3`;
 
-  const tempFilename = `${safeFilename}.mp3`;
+  // const tempFilename = `${safeFilename}.mp3`;
 
   const tempFilePath = path.join(__dirname, tempFilename);
 
