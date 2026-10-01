@@ -69,9 +69,9 @@ async function fetchVideoMeta(url) {
       url,
     ];
 
-    // if (cookiePath && fs.existsSync(cookiePath)) {
-    //   spawnArgs.splice(spawnArgs.length - 1, 0, "--cookies", cookiePath);
-    // }
+    if (cookiePath && fs.existsSync(cookiePath)) {
+      spawnArgs.splice(spawnArgs.length - 1, 0, "--cookies", cookiePath);
+    }
 
     const videoData = await new Promise((resolve, reject) => {
       const process = spawn(YT_DLP_PATH, spawnArgs);
