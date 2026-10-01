@@ -491,24 +491,18 @@ app.get("/api/download-file", async (req, res) => {
 
     ffmpegCommand
 
-      // =======================================================
-      // START
-      // =======================================================
-
       .on("start", (commandLine) => {
-        console.log("========== ACTUAL FFMPEG COMMAND ==========");
-
+        console.log("========== FFMPEG START ==========");
         console.log(commandLine);
+        console.log("==================================");
 
-        console.log("===========================================");
+        progressTracker[id] = 0;
       })
 
-      // =======================================================
-      // PROGRESS
-      // =======================================================
-
       .on("progress", (progress) => {
-        if (meta.duration > 0 && progress.timemark) {
+        console.log("RAW FFMPEG PROGRESS:", progress);
+
+        if (progress.timemark && meta.duration) {
           const timeParts = progress.timemark.split(":");
 
           const hours = parseFloat(timeParts[0]) || 0;
@@ -517,78 +511,65 @@ app.get("/api/download-file", async (req, res) => {
 
           const secondsProcessed = hours * 3600 + minutes * 60 + seconds;
 
-          let percent = Math.round((secondsProcessed / meta.duration) * 100);
+          const duration = Number(meta.duration);
 
-          progressTracker[id] = Math.min(Math.max(percent, 0), 99);
+          if (duration > 0) {
+            const percent = Math.min(
+              Math.max(Math.round((secondsProcessed / duration) * 100), 0),
+              99,
+            );
 
-          console.log(`FFMPEG progress: ${progressTracker[id]}%`);
+            progressTracker[id] = percent;
+
+            console.log(
+              `FFMPEG progress ${id}: ${percent}% | ${progress.timemark}`,
+            );
+          }
         }
       })
-
-      // =======================================================
-      // ERROR
-      // =======================================================
 
       .on("error", (error) => {
         console.error("FFMPEG ERROR:", error.message);
 
         delete progressTracker[id];
 
-        // Delete MP3
         if (fs.existsSync(tempFilePath)) {
           fs.unlinkSync(tempFilePath);
         }
 
-        // Delete raw artwork
         if (fs.existsSync(rawImagePath)) {
           fs.unlinkSync(rawImagePath);
         }
 
-        // Delete optimized artwork
         if (fs.existsSync(optimizedImagePath)) {
           fs.unlinkSync(optimizedImagePath);
         }
+
+        delete progressTracker[id + "-meta"];
 
         if (!res.headersSent) {
           res.status(500).send("Audio compilation failed.");
         }
       })
 
-      // =======================================================
-      // SUCCESS
-      // =======================================================
-
       .on("end", () => {
         console.log("FFMPEG Conversion Success!");
 
-        console.log("MP3 created with embedded artwork and ID3v2.3 metadata.");
-
-        // =====================================================
-        // PROGRESS 100%
-        // =====================================================
-
+        // IMPORTANT: only here do we set 100%
         progressTracker[id] = 100;
 
-        // =====================================================
-        // RESPONSE HEADERS
-        // =====================================================
+        console.log(`FFMPEG progress ${id}: 100%`);
 
         res.setHeader(
           "Content-Disposition",
-          `attachment; filename="${encodeURIComponent(tempFilename)}"`,
+          `attachment; filename="song.mp3"; filename*=UTF-8''${encodeURIComponent(
+            tempFilename,
+          )}`,
         );
 
         res.setHeader("Content-Type", "audio/mpeg");
 
-        // =====================================================
-        // READ MP3
-        // =====================================================
-
         const fileStream = fs.createReadStream(tempFilePath);
-
-        // =====================================================
-        // FILE STREAM ERROR
-        // =====================================================
 
         fileStream.on("error", (streamErr) => {
           console.error("File stream error:", streamErr.message);
@@ -605,18 +586,11 @@ app.get("/api/download-file", async (req, res) => {
             fs.unlinkSync(optimizedImagePath);
           }
 
+          delete progressTracker[id];
           delete progressTracker[id + "-meta"];
         });
 
-        // =====================================================
-        // SEND FILE
-        // =====================================================
-
         fileStream.pipe(res).on("finish", () => {
-          // =================================================
-          // CLEAN TEMP FILES
-          // =================================================
-
           if (fs.existsSync(tempFilePath)) {
             fs.unlinkSync(tempFilePath);
           }
@@ -629,35 +603,12 @@ app.get("/api/download-file", async (req, res) => {
             fs.unlinkSync(optimizedImagePath);
           }
 
+          delete progressTracker[id];
           delete progressTracker[id + "-meta"];
 
           console.log("Temporary files cleaned successfully.");
         });
       });
-
-    // =========================================================
-    // DEBUG
-    // =========================================================
-
-    console.log("========== FINAL FFMPEG OUTPUT ==========");
-
-    console.log("tempFilename:", tempFilename);
-
-    console.log("tempFilePath:", tempFilePath);
-
-    console.log("quality:", quality);
-
-    console.log("url:", url);
-
-    console.log("hasImage:", hasImage);
-
-    console.log("optimizedImagePath:", optimizedImagePath);
-
-    console.log("=========================================");
-
-    // =========================================================
-    // START FFMPEG — ONLY ONCE
-    // =========================================================
 
     ffmpegCommand.run();
   } catch (error) {
@@ -684,31 +635,50 @@ app.get("/api/download-file", async (req, res) => {
 });
 
 app.get("/api/progress/:id", (req, res) => {
-  // Lock down the headers to unblock the React request loop instantly
+  const trackerId = req.params.id;
   const requestOrigin = req.headers.origin || "*";
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
 
-  // 👈 UPDATED: Tells the browser that port 5174 is safe to stream to!
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
   res.setHeader("Access-Control-Allow-Origin", requestOrigin);
 
-  const trackerId = req.params.id;
+  res.flushHeaders();
 
-  const interval = setInterval(() => {
-    const currentProgress = progressTracker[trackerId] || 0;
+  console.log("SSE connected:", trackerId);
 
-    // Write out the live percentage array block
-    res.write(`data: ${JSON.stringify({ progress: currentProgress })}\n\n`);
+  const sendProgress = () => {
+    const currentProgress = progressTracker[trackerId] ?? 0;
+
+    console.log(`SSE ${trackerId}: ${currentProgress}%`);
+
+    res.write(
+      `data: ${JSON.stringify({
+        progress: currentProgress,
+      })}\n\n`,
+    );
 
     if (currentProgress >= 100) {
       clearInterval(interval);
-      delete progressTracker[trackerId];
-      res.end();
+
+      setTimeout(() => {
+        res.end();
+      }, 300);
     }
+  };
+
+  // Send current value immediately
+  sendProgress();
+
+  // Continue sending updates
+  const interval = setInterval(() => {
+    sendProgress();
   }, 500);
 
-  req.on("close", () => clearInterval(interval));
+  req.on("close", () => {
+    console.log("SSE disconnected:", trackerId);
+    clearInterval(interval);
+  });
 });
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => console.log(`Server live on port ${PORT}`));

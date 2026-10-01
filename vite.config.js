@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     sourcemap: false, // 👈 CRITICAL: Turning off source maps saves massive amounts of RAM
     cssCodeSplit: true,

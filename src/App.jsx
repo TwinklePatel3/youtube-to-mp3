@@ -13,7 +13,6 @@ function App() {
   const [downloadId, setDownloadId] = useState(null);
   const [progress, setProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [readyToSave, setReadyToSave] = useState(false); // 👈 Controls standard prompt state
 
   useEffect(() => {
     let eventSource = null;
@@ -37,8 +36,6 @@ function App() {
 
           if (data.progress >= 100) {
             setIsDownloading(false);
-            setReadyToSave(true); // 👈 1. Unlocks the prompt download link at 100%
-
             eventSource.close();
           }
         } catch (err) {
@@ -60,7 +57,6 @@ function App() {
   async function requestDownload(url, quality) {
     setIsDownloading(true);
     setProgress(0);
-    setReadyToSave(false);
     setDownloadId(null);
 
     try {
@@ -79,7 +75,9 @@ function App() {
       );
 
       if (!response.ok) {
-        throw new Error("Download request failed");
+        const data = await response.json().catch(() => null);
+
+        throw new Error(data?.error || "Download request failed");
       }
 
       const trackedId = response.headers.get("X-Download-ID");
@@ -87,18 +85,16 @@ function App() {
       console.log("Captured tracking ID:", trackedId);
 
       if (!trackedId) {
-        throw new Error("Download ID was not returned");
+        throw new Error("Download ID was not returned by server");
       }
 
       setDownloadId(trackedId);
-
-      console.log("Session initialization confirmed:", response.status);
 
       return trackedId;
     } catch (err) {
       setIsDownloading(false);
 
-      console.error("Network interface error:", err.message);
+      console.error("Download initialization error:", err.message);
 
       throw err;
     }
@@ -197,7 +193,7 @@ function App() {
           <img
             src={songData.thumbnail}
             alt="Selected preview"
-            className="aspect-square w-full rounded-xl"
+            className="aspect-square w-full rounded-xl  "
           />
 
           <h2 className="mt-6 text-xl font-bold"> {songData.title}</h2>
@@ -214,66 +210,50 @@ function App() {
               <option value="320">320 kbps</option>
             </select>
           </label>
-          {/* DYNAMIC PROGRESS INDICATOR */}
-          {(isDownloading || progress > 0) && (
+          {isDownloading && (
             <div className="mt-4 w-full">
               <div className="flex justify-between text-sm font-semibold mb-1 text-gray-700">
-                <span>
-                  {progress >= 100
-                    ? "✨ Processing Complete!"
-                    : "⚡ Compiling Tracks:"}
-                </span>
+                <span>Transcoding File:</span>
                 <span>{progress}%</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
                 <div
-                  className="bg-green-500 h-2.5 rounded-full transition-all duration-300"
+                  className="bg-green-500 h-2.5 rounded-full transition-all duration-300 ease-out"
                   style={{ width: `${progress}%` }}
                 ></div>
               </div>
             </div>
           )}
 
-          {/* TWO-PHASE CRASH-PROOF ACTION BUTTON */}
-          {!readyToSave ? (
-            <button
-              className={`mt-5 w-full rounded-lg px-6 py-3 font-semibold text-white ${isDownloading ? "bg-gray-400 cursor-not-allowed" : "bg-red-500 hover:bg-red-600"}`}
-              disabled={isDownloading}
-              onClick={async () => {
-                try {
-                  await requestDownload(url, quality);
-                } catch (err) {
-                  setError(err.message);
+          <button
+            className={`mt-5 w-full rounded-lg px-6 py-3 font-semibold text-white transition-colors ${
+              isDownloading
+                ? "cursor-not-allowed bg-gray-400"
+                : "cursor-pointer bg-red-500 hover:bg-red-600"
+            }`}
+            disabled={isDownloading}
+            onClick={async () => {
+              try {
+                const targetId = await requestDownload(url, quality);
+
+                if (!targetId) {
+                  throw new Error("Download session could not be created.");
                 }
-              }}
-            >
-              {isDownloading
-                ? `Processing Pipeline... (${progress}%)`
-                : "Convert & Process Artwork"}
-            </button>
-          ) : (
-            // 🚀 THE FIX FOR THE AUTOMATIC DOWNLOAD BUG:
-            // This normal anchor tag forces a true file payload request only AFTER compilation hits 100%,
-            // natively triggering your browser's "Save As" dialog prompt every time!
-            <a
-              href={
-                readyToSave
-                  ? `https://youtube-to-mp3-rhww.onrender.com/api/download-file/${downloadId}`
-                  : "#"
+
+                // Start the actual FFmpeg/download request
+                window.location.href =
+                  `https://youtube-to-mp3-rhww.onrender.com/api/download-file` +
+                  `?url=${encodeURIComponent(url)}` +
+                  `&quality=${encodeURIComponent(quality)}` +
+                  `&id=${encodeURIComponent(targetId)}`;
+              } catch (err) {
+                setIsDownloading(false);
+                setError(err.message);
               }
-              className="mt-5 block text-center w-full rounded-lg bg-green-600 px-6 py-3 font-semibold text-white hover:bg-green-700 transition-colors"
-              onClick={() => {
-                // Reset screen state back to default after the prompt box triggers
-                setTimeout(() => {
-                  setReadyToSave(false);
-                  setProgress(0);
-                  setDownloadId(null);
-                }, 2000);
-              }}
-            >
-              📥 Save Completed MP3 to Device
-            </a>
-          )}
+            }}
+          >
+            {isDownloading ? `Processing... ${progress}%` : "Download now"}
+          </button>
         </section>
       )}
     </>
