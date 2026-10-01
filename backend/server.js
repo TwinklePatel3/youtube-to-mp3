@@ -402,18 +402,17 @@ app.get("/api/download-file", async (req, res) => {
       "1",
 
       "-metadata",
-      `title=${title}`,
+      `title="${title.replace(/"/g, '\\"')}"`,
 
       "-metadata",
-      `artist=${artist}`,
+      `artist="${artist.replace(/"/g, '\\"')}"`,
 
       "-metadata",
-      `album=${album}`,
+      `album="${album.replace(/"/g, '\\"')}"`,
 
       "-metadata",
-      "comment=YouTube Download",
+      `comment="YouTube Download"`,
     ]);
-
     // =========================================================
     // 6. EMBED FRONT COVER
     // =========================================================
@@ -424,46 +423,26 @@ app.get("/api/download-file", async (req, res) => {
       ffmpegCommand = ffmpegCommand.input(optimizedImagePath);
 
       ffmpegCommand.outputOptions([
-        // Audio stream
         "-map",
         "0:a:0",
 
-        // Artwork stream
         "-map",
         "1:v:0",
 
-        // Convert artwork to JPEG
         "-c:v",
         "mjpeg",
 
-        // Apple-friendly ID3
         "-id3v2_version",
         "3",
 
-        // Cover metadata
         "-metadata:s:v:0",
-        "title=Cover",
+        'title="Cover"',
 
         "-metadata:s:v:0",
-        "comment=Front Cover",
+        'comment="Front Cover"',
 
-        // IMPORTANT:
-        // Mark image as attached front cover
         "-disposition:v:0",
         "attached_pic",
-
-        // MP3 metadata
-        "-metadata",
-        `title=${title}`,
-
-        "-metadata",
-        `artist=${artist}`,
-
-        "-metadata",
-        `album=${album}`,
-
-        "-metadata",
-        "comment=YouTube Download",
       ]);
 
       console.log("Apple Music-compatible front-cover configuration enabled.");
