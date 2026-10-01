@@ -240,7 +240,8 @@ app.get("/api/download-file", async (req, res) => {
   }
 
   const { meta, url, quality } = progressTracker[id + "-meta"];
-  const safeFilename = title.replace(/[\/\\:*?"<>]/g, "").trim();
+  const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
+  // const tempFilename = `${meta.title}-${quality}kbps.mp3`;
 
   const tempFilename = `${safeFilename}.mp3`;
 
@@ -380,11 +381,7 @@ app.get("/api/download-file", async (req, res) => {
     // =========================================================
     // FFMPEG COMMAND
     // =========================================================
-    const data = await getYouTubeMetadata(url);
 
-    const title = data.title || "Unknown Title";
-    const artist = data.artist || "Unknown Artist";
-    const album = "YouTube Downloads";
     let ffmpegCommand = ffmpeg(audioStream);
 
     // =========================================================
@@ -421,13 +418,7 @@ app.get("/api/download-file", async (req, res) => {
         "3",
 
         "-metadata",
-        `title=${title}`,
-
-        "-metadata",
-        `artist=${artist}`,
-
-        "-metadata",
-        `album=${album}`,
+        `title=${meta.title}`,
 
         "-metadata",
         "comment=YouTube Download",
