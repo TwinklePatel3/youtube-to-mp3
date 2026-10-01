@@ -515,26 +515,49 @@ app.get("/api/download-file", async (req, res) => {
       .on("progress", (progress) => {
         console.log("RAW FFMPEG PROGRESS:", progress);
 
-        if (progress.timemark && Number(meta.duration) > 0) {
+        // 1. Ensure duration is extracted as a clean, valid number
+        let duration = 0;
+        if (meta && meta.duration) {
+          duration = Number(meta.duration);
+        }
+
+        // 🚀 CRITICAL ENGINE FALLBACK: If duration is missing, un-parseable, or 0,
+        // we use a safe standard track length default (e.g., 3 minutes / 180s)
+        // so the progress percentage bar doesn't stay frozen at 0%!
+        if (!duration || isNaN(duration) || duration <= 0) {
+          console.warn(
+            "Warning: Video duration was invalid or 0. Using 180s tracker fallback.",
+          );
+          duration = 180;
+        }
+
+        if (progress.timemark && typeof progress.timemark === "string") {
           const timeParts = progress.timemark.split(":");
 
+          // Safely parse time elements regardless of single digit layouts
           const hours = parseFloat(timeParts[0]) || 0;
           const minutes = parseFloat(timeParts[1]) || 0;
           const seconds = parseFloat(timeParts[2]) || 0;
 
           const secondsProcessed = hours * 3600 + minutes * 60 + seconds;
 
-          const duration = Number(meta.duration);
+          // 2. Prevent NaN division crashes and constrain progress between 0% and 99%
+          let percent = 0;
+          if (secondsProcessed > 0) {
+            percent = Math.round((secondsProcessed / duration) * 100);
+          }
 
-          const percent = Math.min(
-            Math.max(Math.round((secondsProcessed / duration) * 100), 0),
-            99,
-          );
+          percent = Math.min(Math.max(percent, 0), 99); // Lock at 99% maximum until file fully saves
 
+          // 3. Write securely to your global stream memory tracking dictionary maps
           progressTracker[id] = percent;
 
           console.log(
-            `FFMPEG progress ${id}: ${percent}% | ${progress.timemark} / ${duration}s`,
+            `FFMPEG progress [${id}]: ${percent}% | Processed: ${Math.round(secondsProcessed)}s / Total: ${duration}s (Timemark: ${progress.timemark})`,
+          );
+        } else {
+          console.log(
+            "Progress event triggered but timemark formatting was un-parseable.",
           );
         }
       })
