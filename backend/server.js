@@ -241,75 +241,90 @@ app.get("/api/download-file", async (req, res) => {
   const { meta, url, quality } = progressTracker[id + "-meta"];
   const tempFilename = `${meta.title}-${quality}kbps.mp3`;
   const tempFilePath = path.join(__dirname, tempFilename);
-  const tempImagePath = path.join(__dirname, `thumb-${id}.jpg`);
+  const rawImagePath = path.join(__dirname, `raw-thumb-${id}.jpg`);
+  const optimizedImagePath = path.join(__dirname, `thumb-${id}.jpg`);
+
+  let hasImage = false;
 
   try {
-    // 1. Download and cache the OEmbed thumbnail locally before initializing FFmpeg
-    if (meta.cover) {
-      try {
-        console.log(`Downloading cached OEmbed artwork asset: ${meta.cover}`);
-        const imgRes = await fetch(meta.cover);
-        if (imgRes.ok) {
-          const arrayBuffer = await imgRes.arrayBuffer();
-          fs.writeFileSync(tempImagePath, Buffer.from(arrayBuffer));
-          console.log("Artwork cached locally successfully.");
-        }
-      } catch (imgErr) {
-        console.error("Failed to compile thumbnail stream:", imgErr.message);
+    // 1. Target High-Resolution YouTube Music Cover Database Assets
+    let targetCoverUrl = meta.cover;
+
+    try {
+      // Extract the core 11-character unique YouTube video ID safely
+      let extractedId = "_4Ft9UIKzwk";
+      if (url.includes("youtu.be/")) {
+        extractedId = url.split("youtu.be/")[1].split(/[?#]/)[0];
+      } else if (url.includes("v=")) {
+        const urlObj = new URL(url);
+        extractedId = urlObj.searchParams.get("v") || extractedId;
       }
+
+      // 🚀 THE ULTIMATE HI-RES FORCING CONFIG:
+      // Redirect lookups straight to the official YouTube Music dynamic album graphics server system
+      targetCoverUrl = `https://googleusercontent.com{extractedId}=w4000-h4000-l90-rj`;
+
+      console.log(
+        `Targeting ultra high-resolution 1:1 canvas server: ${targetCoverUrl}`,
+      );
+    } catch (err) {
+      console.warn(
+        "Could not calculate high-res music database target, utilizing fallback layout.",
+      );
     }
 
-    if (fs.existsSync(tempImagePath)) {
-      try {
-        console.log("Preparing full square artwork...");
-        const originalImage = fs.readFileSync(tempImagePath);
+    // 2. Fetch the target asset file stream container down onto the machine drive disk space
+    try {
+      let imgRes = await fetch(targetCoverUrl);
 
-        // Create a blurred square background.
-        const background = await sharp(originalImage)
-          .resize(500, 500, { fit: "cover" })
-          .blur(30)
-          .jpeg({ quality: 90 })
-          .toBuffer();
+      // Fallback: If the video is an indie upload missing an official YT Music asset metadata container,
+      // fetch standard artwork and force upscale to 4000x4000 square dimensions
+      if (!imgRes.ok) {
+        console.log(
+          "YT Music cover server missed target. Fetching base metadata thumbnail layout instead...",
+        );
+        imgRes = await fetch(meta.cover || `https://youtube.com`);
+      }
 
-        // Resize the original image cleanly keeping aspect ratio inside the boundaries
-        const foreground = await sharp(originalImage)
-          .resize({
-            width: 500,
-            height: 500,
-            fit: "inside",
-            withoutEnlargement: false,
+      if (imgRes.ok) {
+        const arrayBuffer = await imgRes.arrayBuffer();
+        fs.writeFileSync(rawImagePath, Buffer.from(arrayBuffer));
+
+        // 🚀 SHARP 1:1 SQUARE TRANSCODING PASS (WITHOUT BLUR BACKDROP PADDING)
+        // Up-samples, crops, and processes a clean 4000x4000 high-fidelity master baseline square tag asset
+        await sharp(rawImagePath)
+          .resize(4000, 4000, {
+            fit: "cover", // Ensures it completely fills the 4000x4000 frame dimensions without stretching fields distortively
+            position: "centre", // Centers subject focus flawlessly
           })
-          .png()
-          .toBuffer();
+          .toFormat("jpeg", {
+            quality: 95, // Maintains maximum color channel fidelity matrices
+            progressive: false, // Crucial for iPhone Apple Music player app recognition handshakes
+          })
+          .toFile(optimizedImagePath);
 
-        // Overlay the complete image in the center of the blurred backdrop
-        const finalArtwork = await sharp(background)
-          .composite([{ input: foreground, gravity: "centre" }])
-          .jpeg({ quality: 95 })
-          .toBuffer();
-
-        fs.writeFileSync(tempImagePath, finalArtwork);
-        console.log("Full square artwork prepared.");
-      } catch (error) {
-        console.error("Artwork processing failed:", error.message);
+        hasImage = true;
+        console.log(
+          "Ultra high-res 4000x4000 1:1 square master artwork file built successfully.",
+        );
       }
+    } catch (imgErr) {
+      console.error("Failed to compile thumbnail stream:", imgErr.message);
     }
 
-    // 🚀 CRITICAL FIX: Removed 'await' so stream audio hooks into execution concurrently!
     const audioStream = streamAudio(url);
-    if (!audioStream)
+    if (!audioStream) {
       throw new Error(
         "Failed to initialize system yt-dlp audio stream pipeline.",
       );
+    }
 
     let ffmpegCommand = ffmpeg(audioStream);
-    const hasImage = fs.existsSync(tempImagePath);
-
     ffmpegCommand.audioCodec("libmp3lame");
     ffmpegCommand.audioBitrate(`${quality}k`).format("mp3");
 
-    if (hasImage) {
-      ffmpegCommand = ffmpegCommand.input(tempImagePath);
+    if (hasImage && fs.existsSync(optimizedImagePath)) {
+      ffmpegCommand = ffmpegCommand.input(optimizedImagePath);
       ffmpegCommand.outputOptions([
         "-map",
         "0:a:0",
@@ -328,7 +343,6 @@ app.get("/api/download-file", async (req, res) => {
       ]);
     }
 
-    // Explicitly expose headers so background fetch can read filenames safely
     res.setHeader("X-Download-ID", id);
     res.setHeader(
       "Access-Control-Expose-Headers",
@@ -346,18 +360,36 @@ app.get("/api/download-file", async (req, res) => {
 
           let percent = Math.round((secondsProcessed / meta.duration) * 100);
           progressTracker[id] = Math.min(Math.max(percent, 0), 99);
-          console.log(`Conversion progress [${id}]: ${percent}%`);
         }
       })
       .on("error", (error) => {
         console.error("FFMPEG ERROR:", error.message);
         delete progressTracker[id];
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+        if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
+        if (fs.existsSync(optimizedImagePath))
+          fs.unlinkSync(optimizedImagePath);
         if (!res.headersSent) res.status(500).send("Audio compilation failed.");
       })
       .on("end", () => {
-        console.log("FFMPEG Conversion Complete!");
+        console.log(
+          "FFMPEG Conversion Success! Injecting High-Res ID3 frames...",
+        );
+
+        const tags = { title: meta.title, artist: "YouTube Downloader" };
+
+        if (hasImage && fs.existsSync(optimizedImagePath)) {
+          tags.image = {
+            mime: "image/jpeg",
+            type: { id: 3, name: "front cover" },
+            description: "Cover Art",
+            imageBuffer: fs.readFileSync(optimizedImagePath),
+          };
+        }
+
+        const success = nodeID3.write(tags, tempFilePath);
+        if (success) console.log("4000x4000 ID3 embedded successfully!");
+
         progressTracker[id] = 100;
 
         res.setHeader(
@@ -366,20 +398,36 @@ app.get("/api/download-file", async (req, res) => {
         );
         res.setHeader("Content-Type", "audio/mpeg");
 
-        fs.createReadStream(tempFilePath)
-          .pipe(res)
-          .on("finish", () => {
-            fs.unlink(tempFilePath, () => {});
-            if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
-            delete progressTracker[id + "-meta"];
-          });
+        const fileStream = fs.createReadStream(tempFilePath);
+
+        fileStream.on("error", (streamErr) => {
+          console.error(
+            `Silent stream transmission error: ${streamErr.message}`,
+          );
+          if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+          if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
+          if (fs.existsSync(optimizedImagePath))
+            fs.unlinkSync(optimizedImagePath);
+          delete progressTracker[id + "-meta"];
+        });
+
+        fileStream.pipe(res).on("finish", () => {
+          if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+          if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
+          if (fs.existsSync(optimizedImagePath))
+            fs.unlinkSync(optimizedImagePath);
+          delete progressTracker[id + "-meta"];
+          console.log("Temporary file cache workspace scrubbed successfully.");
+        });
       })
       .save(tempFilePath);
   } catch (error) {
     console.error("Streaming error:", error.message);
     delete progressTracker[id];
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    if (fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
+    if (fs.existsSync(rawImagePath)) fs.unlinkSync(rawImagePath);
+    if (fs.existsSync(optimizedImagePath)) fs.unlinkSync(optimizedImagePath);
+    if (!res.headersSent) res.status(400).send(error.message);
   }
 });
 

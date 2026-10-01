@@ -224,24 +224,35 @@ function App() {
             disabled={isDownloading}
             onClick={async () => {
               try {
-                // 1. Fire the session handshake pass to generate the tracking token
+                // 1. Fire the fast session handshake pass to generate the downloadId token
                 const targetId = await requestDownload(url, quality);
 
                 if (targetId) {
-                  console.log("Downloading audio binary data chunks...");
+                  console.log("Opening streaming chunks consumer pipeline...");
 
-                  // 2. Fetch the file via a background stream (fixes automatic downloading without prompt)
-                  const fileResponse = await fetch(
+                  // 2. Fetch the live file stream from the backend
+                  const response = await fetch(
                     `http://127.0.0{encodeURIComponent(url)}&quality=${quality}&id=${targetId}`,
                   );
 
-                  if (!fileResponse.ok)
+                  if (!response.ok)
                     throw new Error("Audio file transmission dropped.");
 
-                  const blob = await fileResponse.blob();
+                  // 🚀 THE KEY FIX: Read the stream chunk-by-chunk in real time without blocking the UI thread
+                  const reader = response.body.getReader();
+                  const chunks = [];
+
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (value) chunks.push(value);
+                  }
+
+                  // 3. Assemble all the downloaded chunks back into a single MP3 file container
+                  const blob = new Blob(chunks, { type: "audio/mpeg" });
                   const downloadUrl = URL.createObjectURL(blob);
 
-                  // 3. Trigger standard browser save dialog popup behavior with custom clean title
+                  // 4. Trigger standard browser save dialog prompt behavior
                   const link = document.createElement("a");
                   link.href = downloadUrl;
                   link.download = `${songData.title}.mp3`;
@@ -255,6 +266,7 @@ function App() {
                 }
               } catch (err) {
                 setError(err.message);
+                setIsDownloading(false);
               }
             }}
           >
