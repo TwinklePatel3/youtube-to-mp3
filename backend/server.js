@@ -604,7 +604,7 @@ app.get("/api/download-file", async (req, res) => {
         console.log(`FFMPEG progress ${id}: 100%`);
         res.setHeader(
           "Content-Disposition",
-          `attachment; filename="${tempFilename}"; filename*=UTF-8''${encodeURIComponent(tempFilename)}`,
+          `attachment; filename="song.mp3"; filename*=UTF-8''${encodeURIComponent(tempFilename)}`,
         );
 
         res.setHeader("Content-Type", "audio/mpeg");

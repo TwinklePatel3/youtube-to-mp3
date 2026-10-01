@@ -13,91 +13,85 @@ function App() {
   const [downloadId, setDownloadId] = useState(null);
   const [progress, setProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
-
+  const [readyToSave, setReadyToSave] = useState(false);
+  // Paste this inside your App component function, right above your return/render block
   useEffect(() => {
     let eventSource = null;
 
     if (downloadId) {
-      console.log("Connecting to progress pipeline for:", downloadId);
-
-      // 🚀 FIXED: Changed downloadid to {downloadId} with a capital 'I'
-      eventSource = new EventSource(
-        `https://youtube-to-mp3-rhww.onrender.com/api/progress/${downloadId}`,
-        {
-          withCredentials: false,
-        },
+      console.log(
+        "Connecting to live progress line for session ID:",
+        downloadId,
       );
 
+      // 🚀 Open a live Server-Sent Events stream straight to your backend tracking route
+      eventSource = new EventSource(`https://onrender.com{downloadId}`, {
+        withCredentials: false,
+      });
+
+      // This triggers every single time your backend updates 'progressTracker[id] = percent'
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log("React progress:", data.progress);
+          console.log("Progress received from cloud server:", data.progress);
+
+          // Update your React state so the UI animation re-renders instantly
           setProgress(data.progress);
 
+          // Auto-close the stream path cleanly when the conversion finishes
           if (data.progress >= 100) {
             setIsDownloading(false);
+            setReadyToSave(true); // Reveals the "Save Completed MP3" download button link
             eventSource.close();
           }
         } catch (err) {
-          console.error("Error parsing progress JSON string payload:", err);
+          console.error(
+            "Error parsing progress stream payload data packets:",
+            err,
+          );
         }
       };
 
+      // Safety fallback: auto-close if connection breaks
       eventSource.onerror = (err) => {
-        console.error("Progress event pipeline closed or disconnected.");
+        console.warn("Progress pipeline stream dropped or completed.");
         eventSource.close();
       };
     }
 
+    // Cleanup: closes the stream path if the user navigates away or closes the app tab
     return () => {
       if (eventSource) eventSource.close();
     };
-  }, [downloadId]);
+  }, [downloadId]); // 👈 Watches this token dynamically
 
   async function requestDownload(url, quality) {
     setIsDownloading(true);
     setProgress(0);
-    setDownloadId(null);
+    setReadyToSave(false);
+    setDownloadId(null); // Reset previous runs
 
-    try {
-      const response = await fetch(
-        "https://youtube-to-mp3-rhww.onrender.com/api/download",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            url,
-            quality,
-          }),
-        },
-      );
+    const response = await fetch("https://onrender.com", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, quality }),
+    });
 
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-
-        throw new Error(data?.error || "Download request failed");
-      }
-
-      const trackedId = response.headers.get("X-Download-ID");
-
-      console.log("Captured tracking ID:", trackedId);
-
-      if (!trackedId) {
-        throw new Error("Download ID was not returned by server");
-      }
-
-      setDownloadId(trackedId);
-
-      return trackedId;
-    } catch (err) {
+    if (!response.ok) {
       setIsDownloading(false);
-
-      console.error("Download initialization error:", err.message);
-
-      throw err;
+      throw new Error("Download initialization handshake failed.");
     }
+
+    const data = await response.json();
+    console.log(
+      "Handshake successful. Target token achieved:",
+      data.downloadId,
+    );
+
+    if (data.downloadId) {
+      setDownloadId(data.downloadId); // 👈 This instantly kicks off your useEffect EventSource hook above!
+    }
+    return data.downloadId;
   }
 
   async function getSongData(url) {
@@ -210,16 +204,26 @@ function App() {
               <option value="320">320 kbps</option>
             </select>
           </label>
-          {isDownloading && (
-            <div className="mt-4 w-full">
-              <div className="flex justify-between text-sm font-semibold mb-1 text-gray-700">
-                <span>Transcoding File:</span>
-                <span>{progress}%</span>
+          {/* PLACE THIS DIRECTLY UNDERNEATH YOUR QUALITY SELECT DROP-DOWN ELEMENT */}
+          {(isDownloading || progress > 0) && (
+            <div className="mt-6 w-full px-1">
+              {/* Label Header Tracker */}
+              <div className="flex justify-between text-sm font-semibold mb-2 text-gray-700">
+                <span className="flex items-center gap-1.5">
+                  {progress >= 100
+                    ? "✨ Processing Complete!"
+                    : "⚡ Converting Codecs..."}
+                </span>
+                <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded text-xs text-gray-600">
+                  {progress}%
+                </span>
               </div>
-              <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+
+              {/* The Animated Tailwind Progress Rail Shell Container */}
+              <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden shadow-inner">
                 <div
-                  className="bg-green-500 h-2.5 rounded-full transition-all duration-300 ease-out"
-                  style={{ width: `${progress}%` }}
+                  className="bg-gradient-to-r from-green-400 to-green-500 h-3 rounded-full shadow transition-all duration-300 ease-out"
+                  style={{ width: `${progress}%` }} // 👈 This maps your React numeric state straight to your element width!
                 ></div>
               </div>
             </div>
