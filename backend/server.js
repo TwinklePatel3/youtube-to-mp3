@@ -36,79 +36,108 @@ app.use(
   }),
 );
 // 🚀 Highly Optimized Metadata Fetcher
+
 async function fetchVideoMeta(url) {
-  let title = `audio-${Date.now()}`;
+  let title = "";
   let duration = 0;
   let cover = "";
-
-  // 1. Instantly grab the Title using your lightweight OEmbed fetch logic
+  let album = "";
+  let channel = "";
+  let singer = "";
+  let uploadDate = "";
+  // 1. Get basic metadata from YouTube oEmbed
   try {
-    const response = await fetch(
-      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
-    );
-    if (response.ok) {
-      const oembedData = await response.json();
-      if (oembedData.title) {
-        title = oembedData.title;
-        console.log(`Title captured via OEmbed API: "${title}"`);
-      }
-      if (oembedData.thumbnail_url) cover = oembedData.thumbnail_url;
-    }
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+
+    const response = await fetch(oembedUrl);
+    const data = await response.json();
+
+    title = data.title || "";
+    channel = data.author_name || "";
+    cover = data.thumbnail_url || "";
   } catch (error) {
-    console.error(
-      "OEmbed metadata fetch failed, using fallback tracking:",
-      error.message,
-    );
+    console.error("oEmbed error:", error.message);
   }
 
-  // 2. Fetch only the Duration using a fast, single-property yt-dlp check
-  // (By asking ONLY for duration, yt-dlp executes significantly faster)
+  // 2. Get detailed metadata using yt-dlp
   try {
-    duration = await new Promise((resolve) => {
-      const cookiePath = path.join(__dirname, "youtube-cookies.txt");
-      const spawnArgs = ["--print", "duration", "--no-playlist", url];
+    const spawnArgs = [
+      "--dump-single-json",
+      "--skip-download",
+      "--no-playlist",
+      "--no-warnings",
+      url,
+    ];
 
-      if (fs.existsSync(cookiePath)) {
-        spawnArgs.push("--cookies", cookiePath); // 👈 Add cookies here as well
-      }
+    // if (cookiePath && fs.existsSync(cookiePath)) {
+    //   spawnArgs.splice(spawnArgs.length - 1, 0, "--cookies", cookiePath);
+    // }
 
-      const ytDlpObj = spawn(YT_DLP_PATH, spawnArgs);
-      let dataBuffer = "";
+    const videoData = await new Promise((resolve, reject) => {
+      const process = spawn(YT_DLP_PATH, spawnArgs);
 
-      ytDlpObj.stdout.on("data", (data) => {
-        dataBuffer += data.toString();
+      let stdout = "";
+      let stderr = "";
+
+      process.stdout.on("data", (data) => {
+        stdout += data.toString();
       });
-      ytDlpObj.on("close", (code) => {
-        resolve(
-          code === 0 && dataBuffer.trim()
-            ? parseFloat(dataBuffer.trim()) || 0
-            : 0,
-        );
+
+      process.stderr.on("data", (data) => {
+        stderr += data.toString();
       });
-      ytDlpObj.on("error", () => resolve(0));
+
+      process.on("error", reject);
+
+      process.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`));
+          return;
+        }
+
+        try {
+          resolve(JSON.parse(stdout));
+        } catch (error) {
+          reject(new Error("Could not parse yt-dlp JSON"));
+        }
+      });
     });
-    console.log(`Duration captured via yt-dlp: ${duration} seconds`);
-  } catch (err) {
-    console.error("Failed to parse duration stream:", err.message);
+
+    // Title
+    title = videoData.title || title;
+    // Duration
+    duration = Number(videoData.duration) || 0;
+
+    // Channel / uploader
+    channel = videoData.channel || videoData.uploader || channel;
+
+    // Singer / artist
+    singer =
+      (Array.isArray(videoData.artists) ? videoData.artists.join(", ") : "") ||
+      videoData.artist ||
+      videoData.track_artist ||
+      videoData.album_artist ||
+      "";
+
+    // Album
+    album = videoData.album || "";
+    release_year = videoData.release_year || "";
+    // Better thumbnail if available
+    cover = videoData.thumbnail || cover;
+    uploadDate = videoData.upload_date || "";
+  } catch (error) {
+    console.error("yt-dlp metadata error:", error.message);
   }
 
-  return { title, duration, cover };
-}
-
-async function getYouTubeMetadata(url) {
-  const response = await fetch(
-    `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
-  );
-
-  if (!response.ok) {
-    throw new Error("Could not retrieve YouTube metadata");
-  }
-  return await response.json();
-}
-function getYouTubeVideoId(url) {
-  const parsedUrl = new URL(url);
-
-  return parsedUrl.searchParams.get("v");
+  return {
+    title: title || `audio-${Date.now()}`,
+    singer: singer || "Unknown Artist",
+    channel: channel || "Unknown Channel",
+    album: album || "",
+    duration,
+    cover,
+    uploadDate,
+  };
 }
 
 function streamAudio(url) {
@@ -168,15 +197,38 @@ app.post("/api/song", async (req, res) => {
   console.log("URL RECEIVED:", youtubeUrl);
 
   try {
-    const data = await getYouTubeMetadata(youtubeUrl);
+    if (!youtubeUrl) {
+      return res.status(400).json({
+        error: "YouTube URL is required",
+      });
+    }
+
+    const data = await fetchVideoMeta(youtubeUrl);
+
+    console.log("METADATA:", data);
 
     res.json({
-      song_name: data.title,
-      singer: data.author_name,
-      cover: data.thumbnail_url,
+      song_name: data.title || "Unknown Title",
+
+      // Actual singer/artist from yt-dlp
+      singer: data.singer || "Unknown Artist",
+
+      // YouTube channel/uploader
+      channel: data.channel || "Unknown Channel",
+
+      // Album if available
+      album: data.album || "",
+
+      // Duration in seconds
+      duration: Number(data.duration) || 0,
+
+      // Album artwork
+      cover: data.cover || "",
+      releaseYear: data.uploadDate ? data.uploadDate.substring(0, 4) : "",
     });
   } catch (error) {
-    console.error(error);
+    console.error("SONG METADATA ERROR:", error);
+
     res.status(500).json({
       error: "Could not retrieve video information",
     });
@@ -262,6 +314,7 @@ app.get("/api/download-file", async (req, res) => {
   const { meta, url, quality } = progressTracker[id + "-meta"];
   // const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
   const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
+  console.log(meta, "META");
 
   const tempFilename = `${safeFilename}-${quality}kbps.mp3`;
   // const tempFilename = `${safeFilename}.mp3`;
@@ -439,11 +492,21 @@ app.get("/api/download-file", async (req, res) => {
         "3",
 
         "-metadata",
-        `title=${meta.title}`,
-
+        `title=${meta.title || "Unknown Title"}`,
         "-metadata",
-        "comment=YouTube Download",
-
+        `artist=${meta.singer || "Unknown Artist"}`,
+        "-metadata",
+        `album=${meta.album || "YouTube Downloads"}`,
+        "-metadata",
+        `album_artist=${meta.singer || "Unknown Artist"}`,
+        "-metadata",
+        "genre=Music",
+        "-metadata",
+        `date=${meta.uploadDate ? meta.uploadDate.substring(0, 4) : ""}`,
+        "-metadata",
+        "track=1",
+        "-metadata",
+        "disc=1",
         // =====================================================
         // AUDIO
         // =====================================================
