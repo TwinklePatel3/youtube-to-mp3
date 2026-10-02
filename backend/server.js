@@ -72,6 +72,7 @@ async function fetchVideoMeta(url) {
   // 2. Get detailed metadata using yt-dlp
   try {
     const spawnArgs = [
+      "--ignore-config",
       "--dump-single-json",
       "--skip-download",
       "--no-playlist",
