@@ -45,11 +45,21 @@ async function fetchVideoMeta(url) {
   let channel = "";
   let singer = "";
   let uploadDate = "";
-  // 1. Get basic metadata from YouTube oEmbed
+  let releaseYear = "";
+
+  // Define the cookie path
+  const cookiePath = path.join(__dirname, "youtube-cookies.txt");
+
+  // 1. Get basic metadata using YouTube oEmbed
   try {
     const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
 
     const response = await fetch(oembedUrl);
+
+    if (!response.ok) {
+      throw new Error(`oEmbed returned status ${response.status}`);
+    }
+
     const data = await response.json();
 
     title = data.title || "";
@@ -66,30 +76,39 @@ async function fetchVideoMeta(url) {
       "--skip-download",
       "--no-playlist",
       "--no-warnings",
-      url,
+      "--js-runtimes",
+      "node",
     ];
 
-    if (cookiePath && fs.existsSync(cookiePath)) {
-      spawnArgs.splice(spawnArgs.length - 1, 0, "--cookies", cookiePath);
+    // Add cookies only if the file exists
+    if (fs.existsSync(cookiePath)) {
+      console.log("Using YouTube cookies for metadata.");
+
+      spawnArgs.push("--cookies", cookiePath);
     }
 
+    // URL must be included after the options
+    spawnArgs.push(url);
+
     const videoData = await new Promise((resolve, reject) => {
-      const process = spawn(YT_DLP_PATH, spawnArgs);
+      const ytDlpProcess = spawn(YT_DLP_PATH, spawnArgs);
 
       let stdout = "";
       let stderr = "";
 
-      process.stdout.on("data", (data) => {
+      ytDlpProcess.stdout.on("data", (data) => {
         stdout += data.toString();
       });
 
-      process.stderr.on("data", (data) => {
+      ytDlpProcess.stderr.on("data", (data) => {
         stderr += data.toString();
       });
 
-      process.on("error", reject);
+      ytDlpProcess.on("error", (error) => {
+        reject(error);
+      });
 
-      process.on("close", (code) => {
+      ytDlpProcess.on("close", (code) => {
         if (code !== 0) {
           reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`));
           return;
@@ -97,7 +116,7 @@ async function fetchVideoMeta(url) {
 
         try {
           resolve(JSON.parse(stdout));
-        } catch (error) {
+        } catch {
           reject(new Error("Could not parse yt-dlp JSON"));
         }
       });
@@ -105,7 +124,8 @@ async function fetchVideoMeta(url) {
 
     // Title
     title = videoData.title || title;
-    // Duration
+
+    // Duration in seconds
     duration = Number(videoData.duration) || 0;
 
     // Channel / uploader
@@ -121,12 +141,23 @@ async function fetchVideoMeta(url) {
 
     // Album
     album = videoData.album || "";
-    release_year = videoData.release_year || "";
-    // Better thumbnail if available
-    cover = videoData.thumbnail || cover;
+
+    // Release year (if supplied by metadata)
+    releaseYear = videoData.release_year ? String(videoData.release_year) : "";
+
+    // Upload date
     uploadDate = videoData.upload_date || "";
+
+    // Use upload year as a fallback, not as a confirmed music release year
+    if (!releaseYear && uploadDate.length >= 4) {
+      releaseYear = uploadDate.substring(0, 4);
+    }
+
+    // Thumbnail
+    cover = videoData.thumbnail || cover;
   } catch (error) {
     console.error("yt-dlp metadata error:", error.message);
+    console.log("Using available oEmbed metadata as fallback.");
   }
 
   return {
@@ -137,53 +168,62 @@ async function fetchVideoMeta(url) {
     duration,
     cover,
     uploadDate,
+    releaseYear,
   };
 }
 
 function streamAudio(url) {
-  console.log("Spawning system audio conversion stream...");
+  console.log("Starting yt-dlp audio stream...");
+
   const cookiePath = path.join(__dirname, "youtube-cookies.txt");
-  // Spawns the binary directly using our clean system environment pathing configurations
+
   const spawnArgs = [
-    url,
-    "--output",
-    "-",
-    "--format",
-    "bestaudio/best",
+    "--no-warnings",
+    "--no-playlist",
     "--no-check-certificates",
-    "--prefer-free-formats",
-    "--limit-rate",
-    "3M",
     "--js-runtimes",
     "node",
+    "--format",
+    "bestaudio",
+    "--output",
+    "-",
   ];
+
   if (fs.existsSync(cookiePath)) {
-    console.log(
-      "Verified cookie file discovered. Injecting human profile session tokens...",
-    );
-    spawnArgs.push("--cookies", cookiePath); // 👈 Instructs yt-dlp to read your local Netscape text array file
+    console.log("Using configured YouTube cookies.");
+    spawnArgs.push("--cookies", cookiePath);
   } else {
-    console.warn(
-      "No youtube-cookies.txt found at root directory. Running anonymously.",
-    );
+    console.warn("No cookie file found. Trying without authentication.");
   }
 
-  const ytDlpProcess = spawn(YT_DLP_PATH, spawnArgs);
-  ytDlpProcess.on("error", (err) => {
-    console.error("Failed to start yt-dlp process binary:", err.message);
+  // Place the URL after the options.
+  spawnArgs.push(url);
+
+  const ytDlpProcess = spawn(YT_DLP_PATH, spawnArgs, {
+    stdio: ["ignore", "pipe", "pipe"],
   });
+
+  ytDlpProcess.on("error", (err) => {
+    console.error("Failed to start yt-dlp:", err.message);
+  });
+
+  ytDlpProcess.stderr.on("data", (data) => {
+    console.error("yt-dlp:", data.toString().trim());
+  });
+
   ytDlpProcess.on("close", (code) => {
     if (code !== 0) {
       console.error(`yt-dlp failed with exit code: ${code}`);
     } else {
-      console.log("yt-dlp finished successfully");
+      console.log("yt-dlp stream completed.");
     }
   });
-  ytDlpProcess.stderr.on("data", (data) => {
-    console.log(`yt-dlp log: ${data.toString().trim()}`);
-  });
 
-  return ytDlpProcess.stdout;
+  // Keep the child process accessible for error monitoring.
+  const audioStream = ytDlpProcess.stdout;
+  audioStream.ytDlpProcess = ytDlpProcess;
+
+  return audioStream;
 }
 
 app.get("/", (req, res) => {
