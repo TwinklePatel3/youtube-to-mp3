@@ -17,13 +17,15 @@ function App() {
 
   const [isLoadingSong, setIsLoadingSong] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [readyToSave, setReadyToSave] = useState(false);
 
   // const API_URL = "http://127.0.0.1:5001";
   const API_URL = "https://youtube-to-mp3-rhww.onrender.com";
-  // =========================================================
-  // LIVE PROGRESS
-  // =========================================================
+  // ===============================================
+  // --------------------------------------------------
+  // LIVE DOWNLOAD PROGRESS
+  // --------------------------------------------------
 
   useEffect(() => {
     if (!downloadId) return;
@@ -38,6 +40,10 @@ function App() {
         const currentProgress = Number(data.progress) || 0;
 
         setProgress(currentProgress);
+
+        if (currentProgress > 0) {
+          setIsPreparing(false);
+        }
 
         if (currentProgress >= 100) {
           eventSource.close();
@@ -56,9 +62,9 @@ function App() {
     };
   }, [downloadId]);
 
-  // =========================================================
+  // --------------------------------------------------
   // YOUTUBE URL VALIDATION
-  // =========================================================
+  // --------------------------------------------------
 
   const isValidYouTubeUrl = (value) => {
     try {
@@ -76,9 +82,9 @@ function App() {
     }
   };
 
-  // =========================================================
-  // GET SONG DATA
-  // =========================================================
+  // --------------------------------------------------
+  // GET SONG INFORMATION
+  // --------------------------------------------------
 
   const getSongData = async (videoUrl) => {
     const response = await fetch(`${API_URL}/api/song`, {
@@ -100,9 +106,9 @@ function App() {
     return data;
   };
 
-  // =========================================================
+  // --------------------------------------------------
   // FIND SONG
-  // =========================================================
+  // --------------------------------------------------
 
   const handleConvert = async () => {
     setError("");
@@ -146,9 +152,9 @@ function App() {
     }
   };
 
-  // =========================================================
-  // REQUEST DOWNLOAD
-  // =========================================================
+  // --------------------------------------------------
+  // START DOWNLOAD JOB
+  // --------------------------------------------------
 
   const requestDownload = async (videoUrl, selectedQuality) => {
     const response = await fetch(`${API_URL}/api/download`, {
@@ -173,9 +179,9 @@ function App() {
     return data.downloadId;
   };
 
-  // =========================================================
+  // --------------------------------------------------
   // SANITIZE FILE NAME
-  // =========================================================
+  // --------------------------------------------------
 
   const sanitizeFilename = (filename) => {
     return filename
@@ -185,9 +191,9 @@ function App() {
       .slice(0, 180);
   };
 
-  // =========================================================
-  // DOWNLOAD
-  // =========================================================
+  // --------------------------------------------------
+  // DOWNLOAD MP3
+  // --------------------------------------------------
 
   const startDownload = async () => {
     if (!url.trim()) {
@@ -197,14 +203,21 @@ function App() {
 
     setError("");
     setIsDownloading(true);
+    setIsPreparing(true);
     setReadyToSave(false);
     setProgress(0);
 
     try {
+      // Start backend download job
       const targetId = await requestDownload(url.trim(), quality);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Give SSE a little time to connect
+      await new Promise((resolve) => setTimeout(resolve, 700));
 
+      // If progress has not started yet, keep preparing state
+      setIsPreparing(false);
+
+      // Get actual MP3 file
       const response = await fetch(
         `${API_URL}/api/download-file?id=${encodeURIComponent(targetId)}`,
       );
@@ -227,6 +240,7 @@ function App() {
 
       setProgress(100);
 
+      // Create browser download
       const downloadUrl = URL.createObjectURL(blob);
 
       const anchor = document.createElement("a");
@@ -253,13 +267,14 @@ function App() {
 
       setError(err.message || "Something went wrong while downloading.");
     } finally {
+      setIsPreparing(false);
       setIsDownloading(false);
     }
   };
 
-  // =========================================================
+  // --------------------------------------------------
   // RESET
-  // =========================================================
+  // --------------------------------------------------
 
   const resetSong = () => {
     setUrl("");
@@ -275,116 +290,31 @@ function App() {
     setProgress(0);
     setReadyToSave(false);
     setIsDownloading(false);
+    setIsPreparing(false);
   };
 
-  // =========================================================
+  // --------------------------------------------------
   // UI
-  // =========================================================
+  // --------------------------------------------------
 
   return (
     <div className="min-h-screen overflow-hidden bg-[#f8f9fc] text-slate-900">
-      {/* =====================================================
-          BACKGROUND
-      ===================================================== */}
-
+      {/* BACKGROUND */}
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        {/* Top red glow */}
+        <div className="absolute -left-32 -top-32 h-[500px] w-[500px] rounded-full bg-red-300/15 blur-[120px]" />
 
-        <div
-          className="
-            absolute
-            -left-32
-            -top-32
-            h-[500px]
-            w-[500px]
-            rounded-full
-            bg-red-300/15
-            blur-[120px]
-          "
-        />
+        <div className="absolute -right-40 top-20 h-[500px] w-[500px] rounded-full bg-pink-300/15 blur-[130px]" />
 
-        {/* Pink glow */}
+        <div className="absolute bottom-[-200px] left-[30%] h-[500px] w-[500px] rounded-full bg-purple-300/10 blur-[140px]" />
 
-        <div
-          className="
-            absolute
-            -right-40
-            top-20
-            h-[500px]
-            w-[500px]
-            rounded-full
-            bg-pink-300/15
-            blur-[130px]
-          "
-        />
-
-        {/* Purple glow */}
-
-        <div
-          className="
-            absolute
-            bottom-[-200px]
-            left-[30%]
-            h-[500px]
-            w-[500px]
-            rounded-full
-            bg-purple-300/10
-            blur-[140px]
-          "
-        />
-
-        {/* Grid */}
-
-        <div
-          className="
-            absolute
-            inset-0
-            opacity-[0.025]
-            [background-image:linear-gradient(#000_1px,transparent_1px),linear-gradient(90deg,#000_1px,transparent_1px)]
-            [background-size:50px_50px]
-          "
-        />
+        <div className="absolute inset-0 opacity-[0.025] [background-image:linear-gradient(#000_1px,transparent_1px),linear-gradient(90deg,#000_1px,transparent_1px)] [background-size:50px_50px]" />
       </div>
 
-      {/* =====================================================
-          NAVBAR
-      ===================================================== */}
-
-      <nav
-        className="
-          sticky
-          top-0
-          z-50
-          border-b
-          border-white/70
-          bg-white/50
-          backdrop-blur-2xl
-        "
-      >
+      {/* NAVBAR */}
+      <nav className="sticky top-0 z-50 border-b border-white/70 bg-white/50 backdrop-blur-2xl">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <div className="flex items-center gap-3">
-            <div
-              className="
-                relative
-                flex
-                h-10
-                w-10
-                items-center
-                justify-center
-                overflow-hidden
-                rounded-xl
-                bg-gradient-to-br
-                from-red-500
-                via-pink-500
-                to-purple-500
-                text-white
-                shadow-lg
-                shadow-red-200
-                transition-all
-                duration-300
-                hover:scale-105
-              "
-            >
+            <div className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-red-500 via-pink-500 to-purple-500 text-white shadow-lg shadow-red-200 transition-all duration-300 hover:scale-105">
               <span className="absolute inset-0 bg-white/20" />
 
               <svg
@@ -409,27 +339,10 @@ function App() {
             </div>
           </div>
 
-          <div
-            className="
-              hidden
-              items-center
-              gap-2
-              rounded-full
-              border
-              border-white
-              bg-white/60
-              px-4
-              py-2
-              text-xs
-              font-semibold
-              text-slate-500
-              shadow-sm
-              backdrop-blur-xl
-              sm:flex
-            "
-          >
+          <div className="hidden items-center gap-2 rounded-full border border-white bg-white/60 px-4 py-2 text-xs font-semibold text-slate-500 shadow-sm backdrop-blur-xl sm:flex">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
             </span>
             Online
@@ -437,129 +350,37 @@ function App() {
         </div>
       </nav>
 
-      {/* =====================================================
-          MAIN
-      ===================================================== */}
-
+      {/* MAIN */}
       <main className="mx-auto max-w-5xl px-5 pb-24">
-        {/* ===================================================
-            HERO
-        =================================================== */}
-
+        {/* HERO */}
         <section className="relative pb-4 pt-20 text-center sm:pt-28">
-          {/* Floating glass pill */}
-
-          <div
-            className="
-              mb-7
-              inline-flex
-              items-center
-              gap-2
-              rounded-full
-              border
-              border-white
-              bg-white/55
-              px-4
-              py-2
-              text-xs
-              font-semibold
-              text-slate-500
-              shadow-[0_10px_35px_rgba(30,30,60,0.06)]
-              backdrop-blur-xl
-              transition-all
-              duration-300
-              hover:-translate-y-1
-              hover:bg-white/75
-            "
-          >
+          <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-white bg-white/55 px-4 py-2 text-xs font-semibold text-slate-500 shadow-[0_10px_35px_rgba(30,30,60,0.06)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:bg-white/75">
             <span className="text-red-500">✦</span>
             Your music, your way
             <span className="text-slate-300">•</span>
             MP3
           </div>
 
-          <h1
-            className="
-              mx-auto
-              max-w-4xl
-              text-5xl
-              font-black
-              leading-[1.02]
-              tracking-[-0.04em]
-              text-slate-900
-              sm:text-7xl
-            "
-          >
+          <h1 className="mx-auto max-w-4xl text-5xl font-black leading-[1.02] tracking-[-0.04em] text-slate-900 sm:text-7xl">
             Turn your favorite
             <br />
-            <span
-              className="
-                bg-gradient-to-r
-                from-red-500
-                via-pink-500
-                to-purple-500
-                bg-clip-text
-                text-transparent
-              "
-            >
+            <span className="bg-gradient-to-r from-red-500 via-pink-500 to-purple-500 bg-clip-text text-transparent">
               videos into music.
             </span>
           </h1>
 
-          <p
-            className="
-              mx-auto
-              mt-7
-              max-w-xl
-              text-sm
-              leading-7
-              text-slate-500
-              sm:text-base
-            "
-          >
+          <p className="mx-auto mt-7 max-w-xl text-sm leading-7 text-slate-500 sm:text-base">
             Paste a YouTube link, choose your quality, and create your MP3 with
             artwork in seconds.
           </p>
         </section>
 
-        {/* ===================================================
-            INPUT
-        =================================================== */}
-
+        {/* URL INPUT */}
         <section className="mx-auto mt-10 max-w-3xl">
-          <div
-            className="
-              group
-              rounded-[30px]
-              border
-              border-white/90
-              bg-white/55
-              p-3
-              shadow-[0_25px_80px_rgba(30,30,60,0.08)]
-              backdrop-blur-2xl
-              transition-all
-              duration-500
-              hover:-translate-y-1
-              hover:bg-white/65
-              hover:shadow-[0_35px_100px_rgba(30,30,60,0.11)]
-            "
-          >
+          <div className="group rounded-[30px] border border-white/90 bg-white/55 p-3 shadow-[0_25px_80px_rgba(30,30,60,0.08)] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-1 hover:bg-white/65 hover:shadow-[0_35px_100px_rgba(30,30,60,0.11)]">
             <div className="flex flex-col gap-3 sm:flex-row">
               <div className="relative flex-1">
-                <div
-                  className="
-                    pointer-events-none
-                    absolute
-                    left-5
-                    top-1/2
-                    z-10
-                    -translate-y-1/2
-                    text-slate-400
-                    transition-colors
-                    duration-300
-                    group-focus-within:text-red-400
-                  "
-                >
+                <div className="pointer-events-none absolute left-5 top-1/2 z-10 -translate-y-1/2 text-slate-400 transition-colors duration-300 group-focus-within:text-red-400">
                   <svg
                     width="19"
                     height="19"
@@ -597,59 +418,14 @@ function App() {
                     }
                   }}
                   placeholder="Paste a YouTube link..."
-                  className="
-                    h-16
-                    w-full
-                    rounded-[22px]
-                    border
-                    border-white
-                    bg-white/60
-                    pl-14
-                    pr-5
-                    text-sm
-                    font-medium
-                    text-slate-800
-                    outline-none
-                    backdrop-blur-xl
-                    transition-all
-                    duration-300
-                    placeholder:text-slate-400
-                    focus:border-red-200
-                    focus:bg-white/90
-                    focus:ring-4
-                    focus:ring-red-100/60
-                    focus:shadow-[0_10px_40px_rgba(239,68,68,0.08)]
-                  "
+                  className="h-16 w-full rounded-[22px] border border-white bg-white/60 pl-14 pr-5 text-sm font-medium text-slate-800 outline-none backdrop-blur-xl transition-all duration-300 placeholder:text-slate-400 focus:border-red-200 focus:bg-white/90 focus:ring-4 focus:ring-red-100/60 focus:shadow-[0_10px_40px_rgba(239,68,68,0.08)]"
                 />
               </div>
 
               <button
                 onClick={handleConvert}
                 disabled={isLoadingSong}
-                className="
-                  group
-                  h-16
-                  rounded-[22px]
-                  bg-gradient-to-r
-                  from-red-500
-                  via-pink-500
-                  to-red-500
-                  bg-[length:200%_100%]
-                  px-8
-                  font-bold
-                  text-white
-                  shadow-lg
-                  shadow-red-200/70
-                  transition-all
-                  duration-500
-                  hover:-translate-y-1
-                  hover:bg-[position:100%_0]
-                  hover:shadow-xl
-                  hover:shadow-red-200
-                  active:translate-y-0
-                  disabled:cursor-not-allowed
-                  disabled:opacity-60
-                "
+                className="group h-16 rounded-[22px] bg-gradient-to-r from-red-500 via-pink-500 to-red-500 bg-[length:200%_100%] px-8 font-bold text-white shadow-lg shadow-red-200/70 transition-all duration-500 hover:-translate-y-1 hover:bg-[position:100%_0] hover:shadow-xl hover:shadow-red-200 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isLoadingSong ? (
                   <span className="flex items-center gap-2">
@@ -669,225 +445,57 @@ function App() {
           </div>
 
           {error && (
-            <div
-              className="
-                mt-4
-                rounded-2xl
-                border
-                border-red-100
-                bg-red-50/70
-                px-4
-                py-3
-                text-center
-                text-sm
-                font-medium
-                text-red-600
-                shadow-sm
-                backdrop-blur-xl
-              "
-            >
+            <div className="mt-4 rounded-2xl border border-red-100 bg-red-50/70 px-4 py-3 text-center text-sm font-medium text-red-600 shadow-sm backdrop-blur-xl">
               {error}
             </div>
           )}
         </section>
 
-        {/* ===================================================
-            SONG CARD
-        =================================================== */}
-
+        {/* SONG CARD */}
         {songData.title && (
           <section className="mx-auto mt-10 max-w-3xl">
-            <div
-              className="
-                relative
-                overflow-hidden
-                rounded-[32px]
-                border
-                border-white/90
-                bg-white/55
-                p-5
-                shadow-[0_30px_100px_rgba(30,30,60,0.09)]
-                backdrop-blur-2xl
-                transition-all
-                duration-500
-                hover:-translate-y-1
-                hover:bg-white/65
-              "
-            >
-              {/* Decorative glow */}
+            <div className="relative overflow-hidden rounded-[32px] border border-white/90 bg-white/55 p-5 shadow-[0_30px_100px_rgba(30,30,60,0.09)] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-1 hover:bg-white/65">
+              <div className="pointer-events-none absolute -right-20 -top-20 h-60 w-60 rounded-full bg-red-300/10 blur-3xl" />
 
-              <div
-                className="
-                  pointer-events-none
-                  absolute
-                  -right-20
-                  -top-20
-                  h-60
-                  w-60
-                  rounded-full
-                  bg-red-300/10
-                  blur-3xl
-                "
-              />
-
+              {/* SONG INFO */}
               <div className="relative flex flex-col gap-6 sm:flex-row">
-                {/* =================================================
-                    ARTWORK
-                ================================================= */}
-
-                <div
-                  className="
-                    group
-                    relative
-                    mx-auto
-                    h-52
-                    w-52
-                    shrink-0
-                    overflow-hidden
-                    rounded-[24px]
-                    bg-slate-100
-                    shadow-[0_20px_50px_rgba(30,30,60,0.14)]
-                    sm:mx-0
-                  "
-                >
+                <div className="group relative mx-auto h-52 w-52 shrink-0 overflow-hidden rounded-[24px] bg-slate-100 shadow-[0_20px_50px_rgba(30,30,60,0.14)] sm:mx-0">
                   {songData.thumbnail ? (
                     <img
                       src={songData.thumbnail}
                       alt={songData.title}
-                      className="
-                        h-full
-                        w-full
-                        object-cover
-                        transition-transform
-                        duration-700
-                        ease-out
-                        group-hover:scale-110
-                      "
+                      className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-110"
                       onError={(e) => {
                         e.currentTarget.style.display = "none";
                       }}
                     />
                   ) : (
-                    <div
-                      className="
-                        flex
-                        h-full
-                        w-full
-                        items-center
-                        justify-center
-                        bg-gradient-to-br
-                        from-red-100
-                        via-pink-100
-                        to-purple-100
-                      "
-                    >
+                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-red-100 via-pink-100 to-purple-100">
                       <span className="text-6xl text-red-400">♫</span>
                     </div>
                   )}
 
-                  {/* Glass label */}
-
-                  <div
-                    className="
-                      absolute
-                      left-3
-                      top-3
-                      rounded-full
-                      border
-                      border-white/60
-                      bg-white/65
-                      px-3
-                      py-1
-                      text-[10px]
-                      font-bold
-                      uppercase
-                      tracking-wider
-                      text-slate-600
-                      shadow-sm
-                      backdrop-blur-xl
-                    "
-                  >
+                  <div className="absolute left-3 top-3 rounded-full border border-white/60 bg-white/65 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-600 shadow-sm backdrop-blur-xl">
                     YouTube
                   </div>
 
-                  {/* Hover play */}
-
-                  <div
-                    className="
-                      absolute
-                      inset-0
-                      flex
-                      items-center
-                      justify-center
-                      bg-black/0
-                      transition-all
-                      duration-300
-                      group-hover:bg-black/10
-                    "
-                  >
-                    <div
-                      className="
-                        flex
-                        h-14
-                        w-14
-                        scale-75
-                        items-center
-                        justify-center
-                        rounded-full
-                        bg-white/80
-                        text-red-500
-                        opacity-0
-                        shadow-xl
-                        backdrop-blur-xl
-                        transition-all
-                        duration-300
-                        group-hover:scale-100
-                        group-hover:opacity-100
-                      "
-                    >
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all duration-300 group-hover:bg-black/10">
+                    <div className="flex h-14 w-14 scale-75 items-center justify-center rounded-full bg-white/80 text-red-500 opacity-0 shadow-xl backdrop-blur-xl transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
                       ▶
                     </div>
                   </div>
                 </div>
 
-                {/* =================================================
-                    SONG DETAILS
-                ================================================= */}
-
                 <div className="flex min-w-0 flex-1 flex-col justify-center">
-                  <div
-                    className="
-                      mb-3
-                      flex
-                      items-center
-                      gap-2
-                    "
-                  >
+                  <div className="mb-3 flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-red-500" />
 
-                    <span
-                      className="
-                        text-[10px]
-                        font-bold
-                        uppercase
-                        tracking-[0.2em]
-                        text-red-500
-                      "
-                    >
+                    <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-500">
                       Ready to convert
                     </span>
                   </div>
 
-                  <h2
-                    className="
-                      line-clamp-3
-                      text-2xl
-                      font-black
-                      leading-tight
-                      tracking-tight
-                      text-slate-900
-                    "
-                  >
+                  <h2 className="line-clamp-3 text-2xl font-black leading-tight tracking-tight text-slate-900">
                     {songData.title}
                   </h2>
 
@@ -896,22 +504,7 @@ function App() {
                   </p>
 
                   <div className="mt-6 flex items-center gap-3">
-                    <div
-                      className="
-                        flex
-                        h-9
-                        w-9
-                        items-center
-                        justify-center
-                        rounded-xl
-                        border
-                        border-white
-                        bg-white/70
-                        text-red-500
-                        shadow-sm
-                        backdrop-blur-xl
-                      "
-                    >
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white bg-white/70 text-red-500 shadow-sm backdrop-blur-xl">
                       ♪
                     </div>
 
@@ -928,10 +521,7 @@ function App() {
                 </div>
               </div>
 
-              {/* =================================================
-                  QUALITY
-              ================================================= */}
-
+              {/* QUALITY */}
               <div className="relative mt-8">
                 <div className="mb-4 flex items-end justify-between">
                   <div>
@@ -944,21 +534,7 @@ function App() {
                     </p>
                   </div>
 
-                  <span
-                    className="
-                      rounded-full
-                      border
-                      border-white
-                      bg-white/60
-                      px-3
-                      py-1
-                      text-[10px]
-                      font-bold
-                      uppercase
-                      tracking-wider
-                      text-slate-400
-                    "
-                  >
+                  <span className="rounded-full border border-white bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     {quality} kbps
                   </span>
                 </div>
@@ -996,7 +572,6 @@ function App() {
                           duration-300
                           hover:-translate-y-1
                           disabled:cursor-not-allowed
-
                           ${
                             active
                               ? "border-red-300 bg-red-50/80 shadow-lg shadow-red-100/70"
@@ -1005,27 +580,17 @@ function App() {
                         `}
                       >
                         {active && (
-                          <div
-                            className="
-                              absolute
-                              right-0
-                              top-0
-                              h-16
-                              w-16
-                              rounded-full
-                              bg-red-300/20
-                              blur-2xl
-                            "
-                          />
+                          <div className="absolute right-0 top-0 h-16 w-16 rounded-full bg-red-300/20 blur-2xl" />
                         )}
 
                         <div className="relative flex items-center justify-between">
                           <div>
                             <p
-                              className={`
-                                font-bold
-                                ${active ? "text-red-600" : "text-slate-700"}
-                              `}
+                              className={
+                                active
+                                  ? "font-bold text-red-600"
+                                  : "font-bold text-slate-700"
+                              }
                             >
                               {item.title}
                             </p>
@@ -1046,7 +611,6 @@ function App() {
                               border
                               transition-all
                               duration-300
-
                               ${
                                 active
                                   ? "scale-110 border-red-500 bg-red-500 shadow-md shadow-red-200"
@@ -1065,149 +629,97 @@ function App() {
                 </div>
               </div>
 
-              {/* =================================================
-                  PROGRESS
-              ================================================= */}
-
+              {/* DOWNLOAD / PROGRESS */}
               {isDownloading && (
-                <div
-                  className="
-                    mt-6
-                    rounded-[22px]
-                    border
-                    border-white
-                    bg-white/55
-                    p-5
-                    shadow-inner
-                    backdrop-blur-xl
-                  "
-                >
-                  <div className="mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="
-                          flex
-                          h-9
-                          w-9
-                          items-center
-                          justify-center
-                          rounded-xl
-                          bg-red-50
-                          text-red-500
-                        "
-                      >
-                        <span className="animate-pulse">♪</span>
+                <div className="mt-6 overflow-hidden rounded-[24px] border border-white/90 bg-white/55 p-6 shadow-inner backdrop-blur-xl">
+                  {/* PREPARING */}
+                  {isPreparing ? (
+                    <div className="text-center">
+                      {/* Main animated loader */}
+                      <div className="relative mx-auto mb-5 flex h-20 w-20 items-center justify-center">
+                        {/* Outer pulse */}
+                        <div className="absolute inset-0 animate-ping rounded-full bg-red-200/30" />
+
+                        {/* Spinning ring */}
+                        <div className="absolute inset-2 animate-[spin_2s_linear_infinite] rounded-full border-2 border-transparent border-t-red-500 border-r-pink-400" />
+
+                        {/* Center */}
+                        <div className="relative flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-red-500 via-pink-500 to-purple-500 text-white shadow-lg shadow-red-200">
+                          <span className="animate-pulse text-xl">♫</span>
+                        </div>
                       </div>
 
-                      <div>
-                        <p className="text-sm font-bold text-slate-700">
-                          Creating your MP3
-                        </p>
+                      <p className="text-base font-bold text-slate-800">
+                        Preparing your download
+                      </p>
 
-                        <p className="text-[10px] text-slate-400">
-                          Please keep this page open
-                        </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Connecting to the audio converter...
+                      </p>
+
+                      {/* Animated dots */}
+                      <div className="mt-4 flex justify-center gap-1.5">
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-red-500 [animation-delay:-0.3s]" />
+
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-pink-500 [animation-delay:-0.15s]" />
+
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-purple-500" />
+                      </div>
+
+                      {/* Moving loading bar */}
+                      <div className="mx-auto mt-5 h-1.5 max-w-xs overflow-hidden rounded-full bg-slate-200/70">
+                        <div className="h-full w-1/3 animate-[loading_1.5s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-red-500 via-pink-500 to-purple-500" />
                       </div>
                     </div>
+                  ) : (
+                    /* REAL PROGRESS */
+                    <div>
+                      <div className="mb-4 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-50 text-red-500">
+                            <span className="animate-pulse">♪</span>
+                          </div>
 
-                    <span className="text-lg font-black text-red-500">
-                      {Math.round(progress)}%
-                    </span>
-                  </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-700">
+                              Creating your MP3
+                            </p>
 
-                  <div className="h-3 overflow-hidden rounded-full bg-slate-200/70">
-                    <div
-                      className="
-                        relative
-                        h-full
-                        rounded-full
-                        bg-gradient-to-r
-                        from-red-500
-                        via-pink-500
-                        to-purple-500
-                        shadow-[0_0_15px_rgba(239,68,68,0.3)]
-                        transition-all
-                        duration-500
-                      "
-                      style={{
-                        width: `${Math.min(progress, 100)}%`,
-                      }}
-                    >
-                      <div
-                        className="
-                          absolute
-                          inset-0
-                          animate-pulse
-                          bg-gradient-to-r
-                          from-transparent
-                          via-white/40
-                          to-transparent
-                        "
-                      />
+                            <p className="text-[10px] text-slate-400">
+                              Converting audio...
+                            </p>
+                          </div>
+                        </div>
+
+                        <span className="text-lg font-black text-red-500">
+                          {Math.round(progress)}%
+                        </span>
+                      </div>
+
+                      <div className="h-3 overflow-hidden rounded-full bg-slate-200/70">
+                        <div
+                          className="relative h-full rounded-full bg-gradient-to-r from-red-500 via-pink-500 to-purple-500 shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-all duration-500"
+                          style={{
+                            width: `${Math.min(progress, 100)}%`,
+                          }}
+                        >
+                          <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
 
-              {/* =================================================
-                  DOWNLOAD
-              ================================================= */}
-
+              {/* DOWNLOAD BUTTON */}
               {!isDownloading && !readyToSave && (
                 <button
                   onClick={startDownload}
-                  className="
-                    group
-                    relative
-                    mt-6
-                    h-16
-                    w-full
-                    overflow-hidden
-                    rounded-[22px]
-                    bg-gradient-to-r
-                    from-red-500
-                    via-pink-500
-                    to-purple-500
-                    bg-[length:200%_100%]
-                    font-bold
-                    text-white
-                    shadow-xl
-                    shadow-red-200/60
-                    transition-all
-                    duration-500
-                    hover:-translate-y-1
-                    hover:bg-[position:100%_0]
-                    hover:shadow-2xl
-                    hover:shadow-pink-200/60
-                    active:translate-y-0
-                  "
+                  className="group relative mt-6 h-16 w-full overflow-hidden rounded-[22px] bg-gradient-to-r from-red-500 via-pink-500 to-purple-500 bg-[length:200%_100%] font-bold text-white shadow-xl shadow-red-200/60 transition-all duration-500 hover:-translate-y-1 hover:bg-[position:100%_0] hover:shadow-2xl hover:shadow-pink-200/60 active:translate-y-0"
                 >
-                  {/* Shine */}
+                  <span className="absolute inset-y-0 -left-20 w-16 rotate-12 bg-white/20 blur-sm transition-all duration-700 group-hover:left-[110%]" />
 
-                  <span
-                    className="
-                      absolute
-                      inset-y-0
-                      -left-20
-                      w-16
-                      rotate-12
-                      bg-white/20
-                      blur-sm
-                      transition-all
-                      duration-700
-                      group-hover:left-[110%]
-                    "
-                  />
-
-                  <span
-                    className="
-                      relative
-                      flex
-                      items-center
-                      justify-center
-                      gap-3
-                    "
-                  >
+                  <span className="relative flex items-center justify-center gap-3">
                     <svg
                       width="20"
                       height="20"
@@ -1228,39 +740,11 @@ function App() {
                 </button>
               )}
 
-              {/* =================================================
-                  SUCCESS
-              ================================================= */}
-
+              {/* SUCCESS */}
               {readyToSave && !isDownloading && (
                 <div className="mt-6">
-                  <div
-                    className="
-                      rounded-[22px]
-                      border
-                      border-emerald-100
-                      bg-emerald-50/70
-                      p-5
-                      text-center
-                      backdrop-blur-xl
-                    "
-                  >
-                    <div
-                      className="
-                        mx-auto
-                        mb-3
-                        flex
-                        h-12
-                        w-12
-                        items-center
-                        justify-center
-                        rounded-full
-                        bg-emerald-100
-                        text-xl
-                        text-emerald-600
-                        shadow-sm
-                      "
-                    >
+                  <div className="rounded-[22px] border border-emerald-100 bg-emerald-50/70 p-5 text-center backdrop-blur-xl">
+                    <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-xl text-emerald-600 shadow-sm">
                       ✓
                     </div>
 
@@ -1276,43 +760,14 @@ function App() {
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <button
                       onClick={startDownload}
-                      className="
-                        rounded-[18px]
-                        border
-                        border-white
-                        bg-white/65
-                        py-3.5
-                        text-sm
-                        font-bold
-                        text-slate-700
-                        shadow-sm
-                        backdrop-blur-xl
-                        transition-all
-                        duration-300
-                        hover:-translate-y-1
-                        hover:bg-white
-                        hover:shadow-lg
-                      "
+                      className="rounded-[18px] border border-white bg-white/65 py-3.5 text-sm font-bold text-slate-700 shadow-sm backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:bg-white hover:shadow-lg"
                     >
                       Download Again
                     </button>
 
                     <button
                       onClick={resetSong}
-                      className="
-                        rounded-[18px]
-                        bg-slate-900
-                        py-3.5
-                        text-sm
-                        font-bold
-                        text-white
-                        shadow-lg
-                        transition-all
-                        duration-300
-                        hover:-translate-y-1
-                        hover:bg-slate-800
-                        hover:shadow-xl
-                      "
+                      className="rounded-[18px] bg-slate-900 py-3.5 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:-translate-y-1 hover:bg-slate-800 hover:shadow-xl"
                     >
                       New Song
                     </button>
@@ -1323,10 +778,7 @@ function App() {
           </section>
         )}
 
-        {/* =====================================================
-            FEATURES
-        ===================================================== */}
-
+        {/* FEATURES */}
         <section className="mx-auto mt-14 max-w-3xl">
           <div className="grid gap-4 sm:grid-cols-3">
             {[
@@ -1334,39 +786,27 @@ function App() {
                 icon: "♫",
                 title: "High Quality",
                 text: "Up to 320 kbps audio.",
-                color: "red",
+                bg: "bg-red-50",
+                textColor: "text-red-500",
               },
               {
                 icon: "◈",
                 title: "Artwork",
                 text: "Album artwork included.",
-                color: "pink",
+                bg: "bg-pink-50",
+                textColor: "text-pink-500",
               },
               {
                 icon: "↯",
                 title: "Live Progress",
                 text: "Watch conversion in real time.",
-                color: "purple",
+                bg: "bg-purple-50",
+                textColor: "text-purple-500",
               },
             ].map((feature) => (
               <div
                 key={feature.title}
-                className="
-                  group
-                  rounded-[24px]
-                  border
-                  border-white/90
-                  bg-white/45
-                  p-5
-                  text-center
-                  shadow-sm
-                  backdrop-blur-xl
-                  transition-all
-                  duration-300
-                  hover:-translate-y-2
-                  hover:bg-white/70
-                  hover:shadow-xl
-                "
+                className="group rounded-[24px] border border-white/90 bg-white/45 p-5 text-center shadow-sm backdrop-blur-xl transition-all duration-300 hover:-translate-y-2 hover:bg-white/70 hover:shadow-xl"
               >
                 <div
                   className={`
@@ -1377,8 +817,8 @@ function App() {
                     items-center
                     justify-center
                     rounded-2xl
-                    bg-${feature.color}-50
-                    text-${feature.color}-500
+                    ${feature.bg}
+                    ${feature.textColor}
                     transition-all
                     duration-300
                     group-hover:scale-110
@@ -1400,10 +840,7 @@ function App() {
           </div>
         </section>
 
-        {/* =====================================================
-            FOOTER
-        ===================================================== */}
-
+        {/* FOOTER */}
         <footer className="mt-16 text-center">
           <div className="mx-auto mb-3 h-px max-w-xs bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
 

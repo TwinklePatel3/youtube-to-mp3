@@ -7,6 +7,8 @@ const fs = require("fs");
 const path = require("path");
 const nodeID3 = require("node-id3");
 const sharp = require("sharp");
+const NODE_PATH = process.execPath;
+console.log("Node executable:", NODE_PATH);
 
 app.use(cors());
 app.use(express.json());
@@ -16,6 +18,7 @@ const isProduction = process.env.NODE_ENV === "production";
 const YT_DLP_PATH = isProduction
   ? path.join(__dirname, ".venv", "bin", "yt-dlp")
   : "yt-dlp";
+console.log("yt-dlp executable:", YT_DLP_PATH);
 
 if (isProduction) {
   process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
@@ -77,8 +80,9 @@ async function fetchVideoMeta(url) {
       "--skip-download",
       "--no-playlist",
       "--no-warnings",
+      "--no-check-formats",
       "--js-runtimes",
-      "node",
+      `node:${NODE_PATH}`,
     ];
 
     // Add cookies only if the file exists
@@ -182,10 +186,11 @@ function streamAudio(url) {
     "--no-warnings",
     "--no-playlist",
     "--no-check-certificates",
+    "--no-check-formats",
     "--js-runtimes",
-    "node",
+    `node:${NODE_PATH}`,
     "--format",
-    "bestaudio",
+    "ba/b",
     "--output",
     "-",
   ];
