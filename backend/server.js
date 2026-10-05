@@ -500,6 +500,9 @@ function startWorker() {
       "--no-check-certificates",
       "--http-chunk-size",
       "10M",
+      "--concurrent-fragments",
+      "4",
+      "--no-part",
       "--format",
       "bestaudio/best",
       "--output",
@@ -585,7 +588,31 @@ function startWorker() {
     if (!parsed)
       return res.status(400).json({ error: "A valid YouTube URL is required" });
     try {
-      const m = await getMeta(parsed.id, parsed.url);
+      // Always start the full lookup in the background so it is cached by the time the user clicks Download.
+      const full = getMeta(parsed.id, parsed.url);
+      full.catch(() => {});
+
+      const cached = metaCache.get(parsed.id);
+      let m;
+      if (cached && cached.exp > Date.now()) {
+        m = cached.meta;
+      } else {
+        try {
+          const o = await fetchOEmbed(parsed.url); // fast path for the preview card
+          m = {
+            title: o.title || "",
+            singer: o.author_name || "Unknown Artist",
+            channel: o.author_name || "Unknown Channel",
+            album: "",
+            duration: 0,
+            cover: o.thumbnail_url || "",
+            releaseYear: "",
+          };
+          if (!m.title) m = await full;
+        } catch {
+          m = await full; // oEmbed failed: wait for the full lookup
+        }
+      }
       res.json({
         song_name: m.title,
         singer: m.singer,
@@ -611,11 +638,11 @@ function startWorker() {
       return res.status(400).json({ error: "Invalid quality" });
     }
     try {
-      const meta = await getMeta(parsed.id, parsed.url);
+      getMeta(parsed.id, parsed.url).catch(() => {}); // warm cache (usually already done)
       const downloadId = crypto.randomUUID();
       await store.set(
         `${downloadId}:job`,
-        { meta, videoId: parsed.id, url: parsed.url, quality },
+        { videoId: parsed.id, url: parsed.url, quality },
         JOB_TTL,
       );
       setProgress(downloadId, 0);
@@ -643,10 +670,10 @@ function startWorker() {
       return res.status(503).send("Server busy, please retry shortly.");
     }
 
-    const { meta, videoId, url, quality } = job;
+    const { videoId, url, quality } = job;
     const outPath = path.join(TEMP_DIR, `${id}.mp3`);
     const coverPath = path.join(TEMP_DIR, `${id}.jpg`);
-    const downloadName = `${safeFileName(meta.title)} [${quality}kbps].mp3`;
+    let downloadName = "audio.mp3";
 
     let aborted = false;
     let ytProc = null;
@@ -669,7 +696,9 @@ function startWorker() {
       if (aborted) throw new Error("Client disconnected");
 
       // Start downloading audio while cover art is prepared in parallel.
-      ytProc = startAudioProcess(url);
+      ytProc = startAudioProcess(url); // download starts immediately...
+      const meta = await getMeta(videoId, url); // ...while metadata (usually cached) resolves
+      downloadName = `${safeFileName(meta.title)} [${quality}kbps].mp3`;
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
       if (aborted) throw new Error("Client disconnected");
 
@@ -697,7 +726,14 @@ function startWorker() {
         args.push("-map", "0:a:0");
         if (hasCover) args.push("-map", "1:v:0");
 
-        args.push("-c:a", "libmp3lame", "-b:a", `${quality}k`);
+        args.push(
+          "-c:a",
+          "libmp3lame",
+          "-b:a",
+          `${quality}k`,
+          "-compression_level",
+          "7",
+        );
         if (hasCover) args.push("-c:v", "copy");
 
         args.push(
