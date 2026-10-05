@@ -1,831 +1,758 @@
-const express = require("express");
-const cors = require("cors");
-const app = express();
-const ffmpeg = require("fluent-ffmpeg");
-const { spawn } = require("child_process");
-const fs = require("fs");
-const path = require("path");
-const nodeID3 = require("node-id3");
-const sharp = require("sharp");
-const NODE_PATH = process.execPath;
-console.log("Node executable:", NODE_PATH);
+"use strict";
 
-app.use(cors());
-app.use(express.json());
-// 2. NOW IT IS SAFE TO COMPUTE PRODUCTION ENV PATHS
+const cluster = require("cluster");
+const os = require("os");
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
+const { spawn } = require("child_process");
+const { pipeline } = require("stream/promises");
+
+// ---------------------------------------------------------------------------
+// CONFIG
+// ---------------------------------------------------------------------------
+const PORT = Number(process.env.PORT) || 5001;
 const isProduction = process.env.NODE_ENV === "production";
+const CPU_COUNT = os.availableParallelism
+  ? os.availableParallelism()
+  : os.cpus().length;
+const WORKERS = Number(process.env.WORKERS) || Math.min(CPU_COUNT, 4);
+const MAX_JOBS = Number(process.env.MAX_JOBS) || 2; // concurrent conversions PER worker
+const MAX_QUEUE = Number(process.env.MAX_QUEUE) || 20; // waiting jobs PER worker
+// Apple recommends square art between 1400 and 3000 px
+const COVER_SIZE = Math.min(
+  Math.max(Number(process.env.COVER_SIZE) || 1400, 1400),
+  3000,
+);
+// "crop" = centre-crop to square (default), "blur" = full frame on a blurred background (nothing cut off)
+const COVER_MODE = process.env.COVER_MODE === "blur" ? "blur" : "crop";
+const META_TTL = 10 * 60 * 1000; // metadata cache
+const JOB_TTL = 15 * 60 * 1000; // unclaimed job expiry
+const PROGRESS_TTL = 30 * 60 * 1000;
+const TEMP_DIR = path.join(__dirname, "temp");
+const COOKIE_PATH = path.join(__dirname, "youtube-cookies.txt");
+const NODE_PATH = process.execPath;
 
 const YT_DLP_PATH = isProduction
   ? path.join(__dirname, ".venv", "bin", "yt-dlp")
   : "yt-dlp";
-console.log("yt-dlp executable:", YT_DLP_PATH);
 
-if (isProduction) {
-  process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
+const ALLOWED_ORIGINS = (
+  process.env.CORS_ORIGINS ||
+  "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-  ffmpeg.setFfmpegPath(path.join(__dirname, "bin", "ffmpeg"));
-}
-const progressTracker = {};
-let conversionProgress = 0;
-app.use(
-  cors({
-    origin: [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-      "http://localhost:5174", // 👈 ADDED: Matches your active React port
-      "http://127.0.0.1:5174", // 👈 ADDED: Absolute mapping safety
-    ],
-    exposedHeaders: ["X-Download-ID", "Content-Disposition"],
-  }),
-);
-// 🚀 Highly Optimized Metadata Fetcher
-
-async function fetchVideoMeta(url) {
-  let title = "";
-  let duration = 0;
-  let cover = "";
-  let album = "";
-  let channel = "";
-  let singer = "";
-  let uploadDate = "";
-  let releaseYear = "";
-
-  // Define the cookie path
-  const cookiePath = path.join(__dirname, "youtube-cookies.txt");
-
-  // 1. Get basic metadata using YouTube oEmbed
-  try {
-    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
-
-    const response = await fetch(oembedUrl);
-
-    if (!response.ok) {
-      throw new Error(`oEmbed returned status ${response.status}`);
+// ---------------------------------------------------------------------------
+// SHARED STATE STORE (in-memory Map with TTL)
+// In cluster mode the primary process owns the Map and workers talk to it
+// over IPC, so any worker can serve any request for a given download id.
+// ---------------------------------------------------------------------------
+class MemStore {
+  constructor() {
+    this.map = new Map();
+  }
+  set(key, value, ttl) {
+    this.map.set(key, { value, exp: Date.now() + ttl });
+  }
+  get(key) {
+    const e = this.map.get(key);
+    if (!e) return null;
+    if (e.exp < Date.now()) {
+      this.map.delete(key);
+      return null;
     }
+    return e.value;
+  }
+  take(key) {
+    const v = this.get(key);
+    this.map.delete(key);
+    return v;
+  }
+  del(key) {
+    this.map.delete(key);
+  }
+  sweep() {
+    const now = Date.now();
+    for (const [k, e] of this.map) if (e.exp < now) this.map.delete(k);
+  }
+}
 
-    const data = await response.json();
+// ---------------------------------------------------------------------------
+// PRIMARY PROCESS (load balancer / supervisor)
+// ---------------------------------------------------------------------------
+if (cluster.isPrimary && WORKERS > 1) {
+  console.log(`Primary ${process.pid} starting ${WORKERS} workers`);
 
-    title = data.title || "";
-    channel = data.author_name || "";
-    cover = data.thumbnail_url || "";
-  } catch (error) {
-    console.error("oEmbed error:", error.message);
+  fs.rmSync(TEMP_DIR, { recursive: true, force: true }); // clear stale files
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+  const store = new MemStore();
+  setInterval(() => store.sweep(), 30_000).unref();
+
+  const handleMessage = (worker, msg) => {
+    if (!msg || msg.type !== "store") return;
+    let out = null;
+    switch (msg.op) {
+      case "set":
+        store.set(msg.key, msg.value, msg.ttl);
+        break;
+      case "get":
+        out = store.get(msg.key);
+        break;
+      case "take":
+        out = store.take(msg.key);
+        break;
+      case "del":
+        store.del(msg.key);
+        break;
+    }
+    if (msg.id && worker.isConnected()) {
+      worker.send({ type: "store-reply", id: msg.id, value: out });
+    }
+  };
+
+  const fork = () =>
+    cluster.fork().on("message", function (m) {
+      handleMessage(this, m);
+    });
+  for (let i = 0; i < WORKERS; i++) fork();
+
+  cluster.on("exit", (worker, code, signal) => {
+    console.error(
+      `Worker ${worker.process.pid} died (${signal || code}). Restarting...`,
+    );
+    setTimeout(fork, 1000);
+  });
+
+  const shutdown = () => {
+    for (const id in cluster.workers)
+      cluster.workers[id].process.kill("SIGTERM");
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+} else {
+  startWorker();
+}
+
+// ---------------------------------------------------------------------------
+// WORKER / SINGLE-PROCESS SERVER
+// ---------------------------------------------------------------------------
+function startWorker() {
+  const express = require("express");
+  const cors = require("cors");
+  const ffmpeg = require("fluent-ffmpeg");
+  const sharp = require("sharp");
+
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+  if (isProduction) {
+    process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
+    ffmpeg.setFfmpegPath(path.join(__dirname, "bin", "ffmpeg"));
   }
 
-  // 2. Get detailed metadata using yt-dlp
-  try {
-    const spawnArgs = [
-      "--ignore-config",
-      "--dump-single-json",
-      "--skip-download",
+  // ---- store client ------------------------------------------------------
+  let store;
+  if (cluster.isWorker) {
+    let seq = 0;
+    const pending = new Map();
+    process.on("message", (m) => {
+      if (m && m.type === "store-reply") {
+        const resolve = pending.get(m.id);
+        if (resolve) {
+          pending.delete(m.id);
+          resolve(m.value);
+        }
+      }
+    });
+    const rpc = (op, key, value, ttl, wantReply = true) =>
+      new Promise((resolve) => {
+        if (!wantReply) {
+          process.send({ type: "store", op, key, value, ttl });
+          return resolve(null);
+        }
+        const id = ++seq;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          resolve(null);
+        }, 2000);
+        pending.set(id, (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        });
+        process.send({ type: "store", id, op, key, value, ttl });
+      });
+    store = {
+      set: (k, v, ttl) => rpc("set", k, v, ttl, false),
+      get: (k) => rpc("get", k),
+      take: (k) => rpc("take", k),
+      del: (k) => rpc("del", k, null, 0, false),
+    };
+  } else {
+    const local = new MemStore();
+    setInterval(() => local.sweep(), 30_000).unref();
+    fs.readdirSync(TEMP_DIR).forEach((f) =>
+      fs.rmSync(path.join(TEMP_DIR, f), { force: true }),
+    );
+    store = {
+      set: async (k, v, ttl) => local.set(k, v, ttl),
+      get: async (k) => local.get(k),
+      take: async (k) => local.take(k),
+      del: async (k) => local.del(k),
+    };
+  }
+
+  // ---- helpers -----------------------------------------------------------
+  const lastProgress = new Map(); // per-worker throttle
+  const setProgress = (id, value) => {
+    if (lastProgress.get(id) === value) return;
+    lastProgress.set(id, value);
+    store.set(`${id}:p`, value, PROGRESS_TTL);
+  };
+
+  class Limiter {
+    constructor(max) {
+      this.max = max;
+      this.active = 0;
+      this.queue = [];
+    }
+    get waiting() {
+      return this.queue.length;
+    }
+    acquire() {
+      if (this.active < this.max) {
+        this.active++;
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => this.queue.push(resolve));
+    }
+    release() {
+      const next = this.queue.shift();
+      if (next) next();
+      else this.active--;
+    }
+  }
+  const limiter = new Limiter(MAX_JOBS);
+
+  const rm = (...files) =>
+    Promise.all(
+      files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {})),
+    );
+
+  const UUID_RE = /^[0-9a-f-]{36}$/i;
+  const VIDEO_ID_RE = /^[\w-]{11}$/;
+  const YT_HOSTS = new Set([
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+  ]);
+
+  /** Returns { id, url } with a canonical URL, or null if not a valid YouTube link. */
+  function parseYouTubeUrl(input) {
+    try {
+      const u = new URL(String(input).trim());
+      if (
+        !["http:", "https:"].includes(u.protocol) ||
+        !YT_HOSTS.has(u.hostname)
+      )
+        return null;
+      let id = null;
+      if (u.hostname === "youtu.be") {
+        id = u.pathname.slice(1).split("/")[0];
+      } else if (u.pathname === "/watch") {
+        id = u.searchParams.get("v");
+      } else {
+        const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{11})/);
+        if (m) id = m[1];
+      }
+      if (!id || !VIDEO_ID_RE.test(id)) return null;
+      return { id, url: `https://www.youtube.com/watch?v=${id}` };
+    } catch {
+      return null;
+    }
+  }
+
+  const safeFileName = (title) =>
+    String(title || "")
+      .replace(/[\/\\:*?"<>|\u0000-\u001f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 150) || "audio";
+
+  const ytDlpBaseArgs = () => {
+    const args = [
       "--no-playlist",
       "--no-warnings",
-      "--ignore-no-formats-error", // metadata doesn't need formats
       "--js-runtimes",
       `node:${NODE_PATH}`,
     ];
+    if (fs.existsSync(COOKIE_PATH)) args.push("--cookies", COOKIE_PATH);
+    return args;
+  };
 
-    // Add cookies only if the file exists
-    if (fs.existsSync(cookiePath)) {
-      console.log("Using YouTube cookies for metadata.");
+  // ---- metadata (parallel sources + cache + in-flight dedupe) -------------
+  const metaCache = new Map(); // videoId -> { meta, exp }
+  const metaInflight = new Map(); // videoId -> Promise
 
-      spawnArgs.push("--cookies", cookiePath);
-    }
-
-    // URL must be included after the options
-    spawnArgs.push(url);
-
-    const videoData = await new Promise((resolve, reject) => {
-      const ytDlpProcess = spawn(YT_DLP_PATH, spawnArgs);
-
-      let stdout = "";
-      let stderr = "";
-
-      ytDlpProcess.stdout.on("data", (data) => {
-        stdout += data.toString();
+  function runYtDlpJson(url, timeoutMs = 25_000) {
+    return new Promise((resolve, reject) => {
+      const args = [
+        "--ignore-config",
+        "--dump-single-json",
+        "--skip-download",
+        "--ignore-no-formats-error", // metadata doesn't need formats
+        ...ytDlpBaseArgs(),
+        url,
+      ];
+      const child = spawn(YT_DLP_PATH, args, {
+        stdio: ["ignore", "pipe", "pipe"],
       });
-
-      ytDlpProcess.stderr.on("data", (data) => {
-        stderr += data.toString();
+      let out = "";
+      let err = "";
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("yt-dlp metadata timed out"));
+      }, timeoutMs);
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (err += d));
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
       });
-
-      ytDlpProcess.on("error", (error) => {
-        reject(error);
-      });
-
-      ytDlpProcess.on("close", (code) => {
-        if (code !== 0) {
-          reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`));
-          return;
-        }
-
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (code !== 0)
+          return reject(
+            new Error(err.trim() || `yt-dlp exited with code ${code}`),
+          );
         try {
-          resolve(JSON.parse(stdout));
+          resolve(JSON.parse(out));
         } catch {
           reject(new Error("Could not parse yt-dlp JSON"));
         }
       });
     });
+  }
 
-    // Title
-    title = videoData.title || title;
+  async function fetchOEmbed(url) {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+      { signal: AbortSignal.timeout(8000) },
+    );
+    if (!res.ok) throw new Error(`oEmbed status ${res.status}`);
+    return res.json();
+  }
 
-    // Duration in seconds
-    duration = Number(videoData.duration) || 0;
+  async function loadMeta(videoId, url) {
+    const [oe, yt] = await Promise.allSettled([
+      fetchOEmbed(url),
+      runYtDlpJson(url),
+    ]);
+    const o = oe.status === "fulfilled" ? oe.value : {};
+    const v = yt.status === "fulfilled" ? yt.value : {};
+    if (yt.status === "rejected")
+      console.error("yt-dlp metadata error:", yt.reason.message);
+    if (oe.status === "rejected")
+      console.error("oEmbed error:", oe.reason.message);
+    if (!o.title && !v.title)
+      throw new Error("Could not retrieve video information");
 
-    // Channel / uploader
-    channel = videoData.channel || videoData.uploader || channel;
-
-    // Singer / artist
-    singer =
-      (Array.isArray(videoData.artists) ? videoData.artists.join(", ") : "") ||
-      videoData.artist ||
-      videoData.track_artist ||
-      videoData.album_artist ||
+    const singer =
+      (Array.isArray(v.artists) ? v.artists.join(", ") : "") ||
+      v.artist ||
+      v.track_artist ||
+      v.album_artist ||
       "";
+    const uploadDate = v.upload_date || "";
+    const releaseYear = v.release_year
+      ? String(v.release_year)
+      : uploadDate.slice(0, 4);
 
-    // Album
-    album = videoData.album || "";
+    // YouTube Music / "Topic" uploads expose real square album art
+    const squareCover =
+      (Array.isArray(v.thumbnails) ? v.thumbnails : [])
+        .filter((t) => t.url && t.width && t.width === t.height)
+        .sort((a, b) => b.width - a.width)[0]?.url || "";
 
-    // Release year (if supplied by metadata)
-    releaseYear = videoData.release_year ? String(videoData.release_year) : "";
-
-    // Upload date
-    uploadDate = videoData.upload_date || "";
-
-    // Use upload year as a fallback, not as a confirmed music release year
-    if (!releaseYear && uploadDate.length >= 4) {
-      releaseYear = uploadDate.substring(0, 4);
-    }
-
-    // Thumbnail
-    cover = videoData.thumbnail || cover;
-  } catch (error) {
-    console.error("yt-dlp metadata error:", error.message);
-    console.log("Using available oEmbed metadata as fallback.");
+    return {
+      squareCover,
+      title: v.title || o.title || `audio-${Date.now()}`,
+      singer: singer || "Unknown Artist",
+      channel: v.channel || v.uploader || o.author_name || "Unknown Channel",
+      album: v.album || "",
+      duration: Number(v.duration) || 0,
+      cover: v.thumbnail || o.thumbnail_url || "",
+      uploadDate,
+      releaseYear,
+    };
   }
 
-  return {
-    title: title || `audio-${Date.now()}`,
-    singer: singer || "Unknown Artist",
-    channel: channel || "Unknown Channel",
-    album: album || "",
-    duration,
-    cover,
-    uploadDate,
-    releaseYear,
-  };
-}
+  function getMeta(videoId, url) {
+    const hit = metaCache.get(videoId);
+    if (hit && hit.exp > Date.now()) return Promise.resolve(hit.meta);
+    if (metaInflight.has(videoId)) return metaInflight.get(videoId);
 
-function streamAudio(url) {
-  console.log("Starting yt-dlp audio stream...");
-
-  const cookiePath = path.join(__dirname, "youtube-cookies.txt");
-
-  const spawnArgs = [
-    "--no-warnings",
-    "--no-playlist",
-    "--js-runtimes",
-    `node:${NODE_PATH}`,
-    "--format",
-    "bestaudio/best",
-    "--output",
-    "-",
-  ];
-
-  if (fs.existsSync(cookiePath)) {
-    console.log("Using configured YouTube cookies.");
-    spawnArgs.push("--cookies", cookiePath);
-  } else {
-    console.warn("No cookie file found. Trying without authentication.");
+    const p = loadMeta(videoId, url)
+      .then((meta) => {
+        metaCache.set(videoId, { meta, exp: Date.now() + META_TTL });
+        if (metaCache.size > 500)
+          metaCache.delete(metaCache.keys().next().value);
+        return meta;
+      })
+      .finally(() => metaInflight.delete(videoId));
+    metaInflight.set(videoId, p);
+    return p;
   }
 
-  // Place the URL after the options.
-  spawnArgs.push(url);
+  // ---- cover art -----------------------------------------------------------
+  async function fetchImage(url) {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    return r.ok ? Buffer.from(await r.arrayBuffer()) : null;
+  }
 
-  const ytDlpProcess = spawn(YT_DLP_PATH, spawnArgs, {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  ytDlpProcess.on("error", (err) => {
-    console.error("Failed to start yt-dlp:", err.message);
-  });
-
-  ytDlpProcess.stderr.on("data", (data) => {
-    console.error("yt-dlp:", data.toString().trim());
-  });
-
-  ytDlpProcess.on("close", (code) => {
-    if (code !== 0) {
-      console.error(`yt-dlp failed with exit code: ${code}`);
-    } else {
-      console.log("yt-dlp stream completed.");
-    }
-  });
-
-  // Keep the child process accessible for error monitoring.
-  const audioStream = ytDlpProcess.stdout;
-  audioStream.ytDlpProcess = ytDlpProcess;
-
-  return audioStream;
-}
-
-app.get("/", (req, res) => {
-  console.log("ROOT ROUTE HIT");
-  res.status(200).send("Backend is working");
-});
-
-app.post("/api/song", async (req, res) => {
-  const youtubeUrl = req.body.url;
-
-  console.log("URL RECEIVED:", youtubeUrl);
-
-  try {
-    if (!youtubeUrl) {
-      return res.status(400).json({
-        error: "YouTube URL is required",
+  /**
+   * Builds an Apple Music-friendly cover: square, sRGB, baseline JPEG, no alpha,
+   * no EXIF/ICC extras. Prefers YouTube's real square album art when available.
+   */
+  async function prepareCover(videoId, outPath, squareUrl) {
+    const sources = [];
+    if (squareUrl) sources.push({ url: squareUrl, square: true });
+    for (const n of ["maxresdefault", "sddefault", "hqdefault"]) {
+      sources.push({
+        url: `https://i.ytimg.com/vi/${videoId}/${n}.jpg`,
+        square: false,
       });
     }
 
-    const data = await fetchVideoMeta(youtubeUrl);
+    for (const src of sources) {
+      try {
+        const input = await fetchImage(src.url);
+        if (!input) continue;
 
-    console.log("METADATA:", data);
-
-    res.json({
-      song_name: data.title || "Unknown Title",
-
-      // Actual singer/artist from yt-dlp
-      singer: data.singer || "Unknown Artist",
-
-      // YouTube channel/uploader
-      channel: data.channel || "Unknown Channel",
-
-      // Album if available
-      album: data.album || "",
-
-      // Duration in seconds
-      duration: Number(data.duration) || 0,
-
-      // Album artwork
-      cover: data.cover || "",
-      releaseYear: data.uploadDate ? data.uploadDate.substring(0, 4) : "",
-    });
-  } catch (error) {
-    console.error("SONG METADATA ERROR:", error);
-
-    res.status(500).json({
-      error: "Could not retrieve video information",
-    });
-  }
-});
-
-app.post("/api/init", async (req, res) => {
-  const { url } = req.body;
-  if (!url) return res.status(400).json({ error: "URL is required" });
-
-  const downloadId = `dl-${Date.now()}`;
-  progressTracker[downloadId] = 0;
-
-  try {
-    const meta = await fetchVideoMeta(url);
-    // Temporarily cache metadata in memory so the download endpoint can access it
-    progressTracker[`${downloadId}-meta`] = meta;
-
-    // Send the tracking ID back to React instantly (takes milliseconds)
-    res.json({ downloadId });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// PHASE 1: Quick Handshake Endpoint (Takes Milliseconds)
-app.post("/api/download", async (req, res) => {
-  const { url, quality } = req.body;
-
-  if (!url) {
-    return res.status(400).json({
-      error: "URL is required",
-    });
-  }
-
-  if (quality !== "128" && quality !== "320") {
-    return res.status(400).json({
-      error: "Invalid quality",
-    });
-  }
-
-  const downloadId = `dl-${Date.now()}`;
-
-  progressTracker[downloadId] = 0;
-
-  try {
-    const meta = await fetchVideoMeta(url);
-
-    progressTracker[`${downloadId}-meta`] = {
-      meta,
-      url,
-      quality,
-    };
-
-    res.setHeader("X-Download-ID", downloadId);
-
-    res.setHeader("Access-Control-Expose-Headers", "X-Download-ID");
-
-    return res.json({
-      success: true,
-      downloadId,
-    });
-  } catch (error) {
-    console.error("Initialization error:", error.message);
-
-    delete progressTracker[downloadId];
-
-    return res.status(400).json({
-      error: error.message,
-    });
-  }
-});
-
-// PHASE 2: Raw Audio Processing & Streaming Endpoint
-
-app.get("/api/download-file", async (req, res) => {
-  const { id } = req.query;
-
-  if (!id || !progressTracker[id + "-meta"]) {
-    return res.status(400).send("Invalid or expired session tracking ID");
-  }
-
-  const { meta, url, quality } = progressTracker[id + "-meta"];
-  // const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
-  const safeFilename = meta.title.replace(/[\/\\:*?"<>]/g, "").trim();
-  console.log(meta, "META");
-
-  const tempFilename = `${safeFilename}-${quality}kbps.mp3`;
-  // const tempFilename = `${safeFilename}.mp3`;
-
-  const tempFilePath = path.join(__dirname, tempFilename);
-
-  console.log("FFmpeg output path:", tempFilePath);
-
-  const rawImagePath = path.join(__dirname, `raw-thumb-${id}.jpg`);
-
-  const optimizedImagePath = path.join(__dirname, `thumb-${id}.jpg`);
-  const tempDir = path.join(__dirname, "temp");
-
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
-
-  let hasImage = false;
-
-  try {
-    // =========================================================
-    // 1. EXTRACT YOUTUBE VIDEO ID
-    // =========================================================
-
-    let extractedId = null;
-
-    try {
-      const urlObj = new URL(url);
-
-      if (urlObj.hostname.includes("youtu.be")) {
-        extractedId = urlObj.pathname.slice(1).split("/")[0];
-      } else if (urlObj.hostname.includes("youtube.com")) {
-        extractedId = urlObj.searchParams.get("v");
-      }
-    } catch (e) {
-      console.error("Could not extract YouTube video ID:", e.message);
-    }
-
-    if (!extractedId) {
-      throw new Error("Could not determine YouTube video ID.");
-    }
-
-    console.log(`YouTube Video ID: ${extractedId}`);
-
-    // =========================================================
-    // 2. DOWNLOAD HIGH-RESOLUTION YOUTUBE ARTWORK
-    // =========================================================
-
-    let targetCoverUrl = `https://i.ytimg.com/vi/${extractedId}/maxresdefault.jpg`;
-
-    console.log(`Targeting artwork: ${targetCoverUrl}`);
-
-    try {
-      let imgRes = await fetch(targetCoverUrl);
-
-      // -------------------------------------------------------
-      // FALLBACK 1
-      // -------------------------------------------------------
-
-      if (!imgRes.ok) {
-        console.log("maxresdefault unavailable. Trying sddefault...");
-
-        targetCoverUrl = `https://i.ytimg.com/vi/${extractedId}/sddefault.jpg`;
-
-        imgRes = await fetch(targetCoverUrl);
-      }
-
-      // -------------------------------------------------------
-      // FALLBACK 2
-      // -------------------------------------------------------
-
-      if (!imgRes.ok) {
-        console.log("sddefault unavailable. Trying hqdefault...");
-
-        targetCoverUrl = `https://i.ytimg.com/vi/${extractedId}/hqdefault.jpg`;
-
-        imgRes = await fetch(targetCoverUrl);
-      }
-
-      // -------------------------------------------------------
-      // PROCESS IMAGE
-      // -------------------------------------------------------
-
-      if (imgRes.ok) {
-        const arrayBuffer = await imgRes.arrayBuffer();
-
-        fs.writeFileSync(rawImagePath, Buffer.from(arrayBuffer));
-
-        console.log(`Artwork downloaded: ${targetCoverUrl}`);
-
-        // =====================================================
-        // CREATE EXACT 4000 x 4000 JPEG
-        // =====================================================
-
-        await sharp(rawImagePath)
-          .resize(4000, 4000, {
+        let img;
+        if (src.square || COVER_MODE === "crop") {
+          img = sharp(input).resize(COVER_SIZE, COVER_SIZE, {
             fit: "cover",
             position: "centre",
-          })
-          .jpeg({
-            quality: 90,
-            chromaSubsampling: "4:4:4",
-            progressive: false,
-          })
-          .toFile(optimizedImagePath);
-
-        hasImage = true;
-
-        console.log("4000x4000 JPEG artwork created successfully.");
-      } else {
-        console.error("Could not download any YouTube artwork.");
-      }
-    } catch (imgErr) {
-      console.error("Artwork processing failed:", imgErr.message);
-    }
-
-    // =========================================================
-    // 3. CREATE AUDIO STREAM
-    // =========================================================
-
-    const audioStream = await streamAudio(url);
-
-    if (!audioStream) {
-      throw new Error(
-        "Failed to initialize system yt-dlp audio stream pipeline.",
-      );
-    }
-
-    // =========================================================
-    // 4. CREATE FFMPEG COMMAND
-    // =========================================================
-
-    // =========================================================
-    // FFMPEG AUDIO SETTINGS
-    // =========================================================
-
-    // let ffmpegCommand = ffmpeg(audioStream);
-    // =========================================================
-    // FFMPEG COMMAND
-    // =========================================================
-
-    let ffmpegCommand = ffmpeg(audioStream);
-
-    // =========================================================
-    // ADD ARTWORK AS INPUT
-    // =========================================================
-
-    if (hasImage && fs.existsSync(optimizedImagePath)) {
-      console.log("Embedding artwork:", optimizedImagePath);
-
-      ffmpegCommand.input(optimizedImagePath);
-    } else {
-      console.log("No artwork available. Creating audio-only MP3.");
-    }
-
-    // =========================================================
-    // OUTPUT
-    // =========================================================
-
-    ffmpegCommand
-      .output(tempFilePath)
-
-      .audioCodec("libmp3lame")
-      .audioBitrate(`${quality}k`)
-
-      .outputOptions(
-        "-f",
-        "mp3",
-
-        // =====================================================
-        // ID3 METADATA
-        // =====================================================
-
-        "-id3v2_version",
-        "3",
-
-        "-metadata",
-        `title=${meta.title || "Unknown Title"}`,
-        "-metadata",
-        `artist=${meta.singer || "Unknown Artist"}`,
-        "-metadata",
-        `album=${meta.album || "YouTube Downloads"}`,
-        "-metadata",
-        `album_artist=${meta.singer || "Unknown Artist"}`,
-        "-metadata",
-        "genre=Music",
-        "-metadata",
-        `date=${meta.uploadDate ? meta.uploadDate.substring(0, 4) : ""}`,
-        "-metadata",
-        "track=1",
-        "-metadata",
-        "disc=1",
-        // =====================================================
-        // AUDIO
-        // =====================================================
-
-        "-map",
-        "0:a:0",
-      );
-
-    // =========================================================
-    // COVER ART
-    // =========================================================
-
-    if (hasImage && fs.existsSync(optimizedImagePath)) {
-      ffmpegCommand.outputOptions(
-        "-map",
-        "1:v:0",
-
-        "-c:v",
-        "mjpeg",
-
-        "-metadata:s:v:0",
-        "title=Cover",
-
-        "-metadata:s:v:0",
-        "comment=Front Cover",
-
-        "-disposition:v:0",
-        "attached_pic",
-      );
-    }
-
-    // =========================================================
-    // RESPONSE HEADERS
-    // =========================================================
-
-    res.setHeader("X-Download-ID", id);
-
-    res.setHeader(
-      "Access-Control-Expose-Headers",
-      "X-Download-ID, Content-Disposition",
-    );
-
-    // =========================================================
-    // FFMPEG EVENTS
-    // =========================================================
-    let lastFFmpegPercent = 0;
-    let progressTimer = null;
-    ffmpegCommand
-
-      .on("start", (commandLine) => {
-        console.log("========== FFMPEG START ==========");
-        console.log(commandLine);
-        console.log("==================================");
-
-        progressTracker[id] = 0;
-
-        progressTimer = setInterval(() => {
-          const current = progressTracker[id] ?? 0;
-
-          // Don't artificially go backwards
-          if (current > lastFFmpegPercent) {
-            lastFFmpegPercent = current;
-          }
-
-          progressTracker[id] = lastFFmpegPercent;
-        }, 500);
-      })
-
-      .on("progress", (progress) => {
-        console.log("RAW FFMPEG PROGRESS:", progress);
-
-        // 1. Ensure duration is extracted as a clean, valid number
-        let duration = 0;
-        if (meta && meta.duration) {
-          duration = Number(meta.duration);
-        }
-
-        // 🚀 CRITICAL ENGINE FALLBACK: If duration is missing, un-parseable, or 0,
-        // we use a safe standard track length default (e.g., 3 minutes / 180s)
-        // so the progress percentage bar doesn't stay frozen at 0%!
-        if (!duration || isNaN(duration) || duration <= 0) {
-          console.warn(
-            "Warning: Video duration was invalid or 0. Using 180s tracker fallback.",
-          );
-          duration = 180;
-        }
-
-        if (progress.timemark && typeof progress.timemark === "string") {
-          const timeParts = progress.timemark.split(":");
-
-          // Safely parse time elements regardless of single digit layouts
-          const hours = parseFloat(timeParts[0]) || 0;
-          const minutes = parseFloat(timeParts[1]) || 0;
-          const seconds = parseFloat(timeParts[2]) || 0;
-
-          const secondsProcessed = hours * 3600 + minutes * 60 + seconds;
-
-          // 2. Prevent NaN division crashes and constrain progress between 0% and 99%
-          let percent = 0;
-          if (secondsProcessed > 0) {
-            percent = Math.round((secondsProcessed / duration) * 100);
-          }
-
-          percent = Math.min(Math.max(percent, 0), 99); // Lock at 99% maximum until file fully saves
-
-          // 3. Write securely to your global stream memory tracking dictionary maps
-          progressTracker[id] = percent;
-
-          console.log(
-            `FFMPEG progress [${id}]: ${percent}% | Processed: ${Math.round(secondsProcessed)}s / Total: ${duration}s (Timemark: ${progress.timemark})`,
-          );
+          });
         } else {
-          console.log(
-            "Progress event triggered but timemark formatting was un-parseable.",
+          // keep the whole frame, fill the rest with a blurred, darkened copy
+          const bg = await sharp(input)
+            .resize(COVER_SIZE, COVER_SIZE, { fit: "cover" })
+            .blur(40)
+            .modulate({ brightness: 0.7 })
+            .toBuffer();
+          const fg = await sharp(input)
+            .resize(COVER_SIZE, COVER_SIZE, { fit: "inside" })
+            .toBuffer();
+          img = sharp(bg).composite([{ input: fg, gravity: "centre" }]);
+        }
+
+        await img
+          .flatten({ background: "#000000" }) // no transparency
+          .toColorspace("srgb") // never CMYK / grayscale
+          .jpeg({ quality: 92, progressive: false, chromaSubsampling: "4:2:0" }) // baseline JPEG
+          .toFile(outPath); // metadata (EXIF/ICC) is stripped by default
+
+        return true;
+      } catch (e) {
+        console.error("Cover failed:", src.url, e.message);
+      }
+    }
+    return false;
+  }
+
+  // ---- audio stream ----------------------------------------------------------
+  function startAudioProcess(url) {
+    const args = [
+      ...ytDlpBaseArgs(),
+      "--no-check-certificates",
+      "--http-chunk-size",
+      "10M",
+      "--format",
+      "bestaudio/best",
+      "--output",
+      "-",
+      url,
+    ];
+    const child = spawn(YT_DLP_PATH, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.on("error", (e) =>
+      console.error("Failed to start yt-dlp:", e.message),
+    );
+    child.stderr.on("data", (d) =>
+      console.error("yt-dlp:", d.toString().trim()),
+    );
+    return child;
+  }
+
+  // ---- express app -------------------------------------------------------------
+  const app = express();
+  app.disable("x-powered-by");
+  app.use(
+    cors({
+      origin: ALLOWED_ORIGINS,
+      exposedHeaders: ["X-Download-ID", "Content-Disposition"],
+    }),
+  );
+  app.use(express.json({ limit: "10kb" }));
+
+  app.get("/", (req, res) => res.send("Backend is working"));
+
+  app.get("/health", (req, res) =>
+    res.json({
+      ok: true,
+      pid: process.pid,
+      activeJobs: limiter.active,
+      queued: limiter.waiting,
+    }),
+  );
+
+  // Metadata only (for preview)
+  app.post("/api/song", async (req, res) => {
+    const parsed = parseYouTubeUrl(req.body?.url);
+    if (!parsed)
+      return res.status(400).json({ error: "A valid YouTube URL is required" });
+    try {
+      const m = await getMeta(parsed.id, parsed.url);
+      res.json({
+        song_name: m.title,
+        singer: m.singer,
+        channel: m.channel,
+        album: m.album,
+        duration: m.duration,
+        cover: m.cover,
+        releaseYear: m.releaseYear,
+      });
+    } catch (e) {
+      console.error("SONG METADATA ERROR:", e.message);
+      res.status(500).json({ error: "Could not retrieve video information" });
+    }
+  });
+
+  // PHASE 1: register a download job (fast)
+  app.post("/api/download", async (req, res) => {
+    const parsed = parseYouTubeUrl(req.body?.url);
+    const quality = String(req.body?.quality);
+    if (!parsed)
+      return res.status(400).json({ error: "A valid YouTube URL is required" });
+    if (quality !== "128" && quality !== "320") {
+      return res.status(400).json({ error: "Invalid quality" });
+    }
+    try {
+      const meta = await getMeta(parsed.id, parsed.url);
+      const downloadId = crypto.randomUUID();
+      await store.set(
+        `${downloadId}:job`,
+        { meta, videoId: parsed.id, url: parsed.url, quality },
+        JOB_TTL,
+      );
+      setProgress(downloadId, 0);
+      res.setHeader("X-Download-ID", downloadId);
+      res.json({ success: true, downloadId });
+    } catch (e) {
+      console.error("Initialization error:", e.message);
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // PHASE 2: convert + send the file
+  app.get("/api/download-file", async (req, res) => {
+    const id = String(req.query.id || "");
+    if (!UUID_RE.test(id))
+      return res.status(400).send("Invalid or expired session tracking ID");
+
+    const job = await store.take(`${id}:job`); // atomic: a job can only be claimed once
+    if (!job)
+      return res.status(400).send("Invalid or expired session tracking ID");
+
+    if (limiter.waiting >= MAX_QUEUE) {
+      setProgress(id, -1);
+      res.setHeader("Retry-After", "10");
+      return res.status(503).send("Server busy, please retry shortly.");
+    }
+
+    const { meta, videoId, url, quality } = job;
+    const outPath = path.join(TEMP_DIR, `${id}.mp3`);
+    const coverPath = path.join(TEMP_DIR, `${id}.jpg`);
+    const downloadName = `${safeFileName(meta.title)} [${quality}kbps].mp3`;
+
+    let aborted = false;
+    let ytProc = null;
+    let command = null;
+    res.on("close", () => {
+      if (res.writableFinished) return;
+      aborted = true; // client left: stop all work
+      if (ytProc) ytProc.kill("SIGKILL");
+      if (command) {
+        try {
+          command.kill("SIGKILL");
+        } catch {}
+      }
+    });
+
+    let acquired = false;
+    try {
+      await limiter.acquire();
+      acquired = true;
+      if (aborted) throw new Error("Client disconnected");
+
+      // Start downloading audio while cover art is prepared in parallel.
+      ytProc = startAudioProcess(url);
+      const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
+      if (aborted) throw new Error("Client disconnected");
+
+      await new Promise((resolve, reject) => {
+        command = ffmpeg(ytProc.stdout);
+        if (hasCover) command.input(coverPath);
+
+        const opts = [
+          "-map",
+          "0:a:0",
+          "-id3v2_version",
+          "3",
+          "-write_id3v1",
+          "1",
+          "-metadata",
+          `title=${meta.title}`,
+          "-metadata",
+          `artist=${meta.singer}`,
+          "-metadata",
+          `album=${meta.album || "YouTube Downloads"}`,
+          "-metadata",
+          `album_artist=${meta.singer}`,
+          "-metadata",
+          "genre=Music",
+          "-metadata",
+          `date=${meta.releaseYear || ""}`,
+        ];
+        if (hasCover) {
+          opts.push(
+            "-map",
+            "1:v:0",
+            "-c:v",
+            "copy",
+            "-metadata:s:v:0",
+            "title=Cover",
+            "-metadata:s:v:0",
+            "comment=Cover (front)",
+            "-disposition:v:0",
+            "attached_pic",
           );
         }
-      })
-      .on("error", (error) => {
-        console.error("FFMPEG ERROR:", error.message);
-        if (progressTimer) {
-          clearInterval(progressTimer);
-          progressTimer = null;
-        }
 
-        console.error("FFMPEG ERROR:", error.message);
-
-        delete progressTracker[id];
-
-        if (fs.existsSync(tempFilePath)) {
-          fs.unlinkSync(tempFilePath);
-        }
-
-        if (fs.existsSync(rawImagePath)) {
-          fs.unlinkSync(rawImagePath);
-        }
-
-        if (fs.existsSync(optimizedImagePath)) {
-          fs.unlinkSync(optimizedImagePath);
-        }
-
-        delete progressTracker[id + "-meta"];
-
-        if (!res.headersSent) {
-          res.status(500).send("Audio compilation failed.");
-        }
-      })
-
-      .on("end", () => {
-        console.log("FFMPEG Conversion Success!");
-        if (progressTimer) {
-          clearInterval(progressTimer);
-          progressTimer = null;
-        }
-
-        // IMPORTANT: only here do we set 100%
-        progressTracker[id] = 100;
-
-        console.log(`FFMPEG progress ${id}: 100%`);
-        res.setHeader(
-          "Content-Disposition",
-          `attachment; filename="song.mp3"; filename*=UTF-8''${encodeURIComponent(tempFilename)}`,
-        );
-
-        res.setHeader("Content-Type", "audio/mpeg");
-
-        const fileStream = fs.createReadStream(tempFilePath);
-
-        fileStream.on("error", (streamErr) => {
-          console.error("File stream error:", streamErr.message);
-
-          if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-          }
-
-          if (fs.existsSync(rawImagePath)) {
-            fs.unlinkSync(rawImagePath);
-          }
-
-          if (fs.existsSync(optimizedImagePath)) {
-            fs.unlinkSync(optimizedImagePath);
-          }
-
-          delete progressTracker[id];
-          delete progressTracker[id + "-meta"];
-        });
-
-        fileStream.pipe(res).on("finish", () => {
-          if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-          }
-
-          if (fs.existsSync(rawImagePath)) {
-            fs.unlinkSync(rawImagePath);
-          }
-
-          if (fs.existsSync(optimizedImagePath)) {
-            fs.unlinkSync(optimizedImagePath);
-          }
-
-          delete progressTracker[id];
-          delete progressTracker[id + "-meta"];
-
-          console.log("Temporary files cleaned successfully.");
-        });
+        command
+          .audioCodec("libmp3lame")
+          .audioBitrate(`${quality}k`)
+          .format("mp3")
+          .outputOptions(opts)
+          .output(outPath)
+          .on("start", () =>
+            console.log(
+              `[${process.pid}] convert start ${id} (${downloadName})`,
+            ),
+          )
+          .on("progress", (p) => {
+            if (typeof p.timemark !== "string") return;
+            const [h, m, s] = p.timemark
+              .split(":")
+              .map((x) => parseFloat(x) || 0);
+            const secs = h * 3600 + m * 60 + s;
+            if (secs <= 0) return;
+            const pct =
+              meta.duration > 0
+                ? (secs / meta.duration) * 100
+                : 99 * (1 - Math.exp(-secs / 180)); // unknown length: smooth estimate
+            setProgress(id, Math.min(Math.max(Math.round(pct), 0), 99));
+          })
+          .on("error", reject)
+          .on("end", resolve)
+          .run();
       });
 
-    ffmpegCommand.run();
-  } catch (error) {
-    console.error("Streaming error:", error.message);
+      limiter.release(); // free CPU slot before streaming the file to the client
+      acquired = false;
+      setProgress(id, 100);
 
-    delete progressTracker[id];
+      if (aborted) throw new Error("Client disconnected");
 
-    if (fs.existsSync(tempFilePath)) {
-      fs.unlinkSync(tempFilePath);
+      const stat = await fs.promises.stat(outPath);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", stat.size);
+      res.setHeader("X-Download-ID", id);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="song.mp3"; filename*=UTF-8''${encodeURIComponent(downloadName)}`,
+      );
+      await pipeline(fs.createReadStream(outPath), res);
+    } catch (e) {
+      if (!aborted) console.error("Streaming error:", e.message);
+      setProgress(id, -1);
+      if (!res.headersSent) res.status(500).send("Audio compilation failed.");
+      else res.destroy();
+    } finally {
+      if (acquired) limiter.release();
+      if (ytProc) ytProc.kill("SIGKILL");
+      await rm(outPath, coverPath);
+      setTimeout(() => lastProgress.delete(id), 60_000).unref();
     }
-
-    if (fs.existsSync(rawImagePath)) {
-      fs.unlinkSync(rawImagePath);
-    }
-
-    if (fs.existsSync(optimizedImagePath)) {
-      fs.unlinkSync(optimizedImagePath);
-    }
-
-    if (!res.headersSent) {
-      res.status(400).send(error.message);
-    }
-  }
-});
-
-app.get("/api/progress/:id", (req, res) => {
-  const trackerId = req.params.id;
-  const requestOrigin = req.headers.origin || "*";
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("Access-Control-Allow-Origin", requestOrigin);
-
-  res.flushHeaders();
-
-  console.log("SSE connected:", trackerId);
-
-  const sendProgress = () => {
-    const currentProgress = progressTracker[trackerId] ?? 0;
-
-    console.log(`SSE ${trackerId}: ${currentProgress}%`);
-
-    res.write(
-      `data: ${JSON.stringify({
-        progress: currentProgress,
-      })}\n\n`,
-    );
-
-    if (currentProgress >= 100) {
-      clearInterval(interval);
-
-      setTimeout(() => {
-        res.end();
-      }, 300);
-    }
-  };
-
-  // Send current value immediately
-  sendProgress();
-
-  // Continue sending updates
-  const interval = setInterval(() => {
-    sendProgress();
-  }, 500);
-
-  req.on("close", () => {
-    console.log("SSE disconnected:", trackerId);
-    clearInterval(interval);
   });
-});
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => console.log(`Server live on port ${PORT}`));
+
+  // Progress via Server-Sent Events (works across workers via shared store)
+  app.get("/api/progress/:id", (req, res) => {
+    const id = req.params.id;
+    if (!UUID_RE.test(id)) return res.status(400).end();
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // stop nginx from buffering SSE
+    res.flushHeaders();
+
+    let closed = false;
+    let last = -2;
+    const tick = async () => {
+      if (closed) return;
+      const p = (await store.get(`${id}:p`)) ?? 0;
+      if (closed) return;
+      if (p !== last) {
+        last = p;
+        res.write(
+          `data: ${JSON.stringify({ progress: Math.max(p, 0), error: p < 0 })}\n\n`,
+        );
+      }
+      if (p >= 100 || p < 0) {
+        clearInterval(timer);
+        setTimeout(() => res.end(), 300);
+      }
+    };
+    const timer = setInterval(tick, 500);
+    const heartbeat = setInterval(
+      () => !closed && res.write(": ping\n\n"),
+      15_000,
+    );
+    req.on("close", () => {
+      closed = true;
+      clearInterval(timer);
+      clearInterval(heartbeat);
+    });
+    tick();
+  });
+
+  const server = app.listen(PORT, () =>
+    console.log(
+      `[${process.pid}] Server live on port ${PORT} (${cluster.isWorker ? "worker" : "single"})`,
+    ),
+  );
+
+  process.on("SIGTERM", () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref();
+  });
+}
