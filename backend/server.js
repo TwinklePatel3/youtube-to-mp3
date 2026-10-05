@@ -176,71 +176,56 @@ async function fetchVideoMeta(url) {
 }
 
 function streamAudio(url) {
-  return new Promise((resolve, reject) => {
-    const cookiePath = path.join(__dirname, "youtube-cookies.txt");
+  console.log("Starting yt-dlp audio stream...");
 
-    const spawnArgs = [
-      "--ignore-config",
-      "--no-warnings",
-      "--no-playlist",
-      "--no-check-certificates",
-      "--no-check-formats",
+  const cookiePath = path.join(__dirname, "youtube-cookies.txt");
 
-      // Use the same formats that worked in Terminal
-      "--format",
-      "140/251/139/250/249/234/233",
+  const spawnArgs = [
+    "--no-warnings",
+    "--no-playlist",
+    "--no-check-certificates",
+    "--no-check-formats",
+    "--format",
+    "ba/b",
+    "--output",
+    "-",
+  ];
 
-      "--output",
-      "-",
-    ];
+  if (fs.existsSync(cookiePath)) {
+    console.log("Using configured YouTube cookies.");
+    spawnArgs.push("--cookies", cookiePath);
+  } else {
+    console.warn("No cookie file found. Trying without authentication.");
+  }
 
-    if (fs.existsSync(cookiePath)) {
-      spawnArgs.push("--cookies", cookiePath);
-    }
+  // Place the URL after the options.
+  spawnArgs.push(url);
 
-    spawnArgs.push(url);
-
-    console.log("yt-dlp command:");
-    console.log(YT_DLP_PATH, spawnArgs);
-
-    const ytDlpProcess = spawn(YT_DLP_PATH, spawnArgs, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stderr = "";
-
-    ytDlpProcess.stderr.on("data", (data) => {
-      const message = data.toString();
-      stderr += message;
-
-      console.log("yt-dlp:", message.trim());
-    });
-
-    ytDlpProcess.on("error", (error) => {
-      console.error("yt-dlp process error:", error);
-      reject(error);
-    });
-
-    ytDlpProcess.on("close", (code) => {
-      console.log("yt-dlp exited with code:", code);
-
-      if (code !== 0) {
-        console.error("yt-dlp failed:");
-        console.error(stderr);
-
-        return;
-      }
-
-      console.log("yt-dlp finished successfully");
-    });
-
-    const audioStream = ytDlpProcess.stdout;
-
-    // Keep reference so FFmpeg can terminate yt-dlp if necessary
-    audioStream.ytDlpProcess = ytDlpProcess;
-
-    resolve(audioStream);
+  const ytDlpProcess = spawn(YT_DLP_PATH, spawnArgs, {
+    stdio: ["ignore", "pipe", "pipe"],
   });
+
+  ytDlpProcess.on("error", (err) => {
+    console.error("Failed to start yt-dlp:", err.message);
+  });
+
+  ytDlpProcess.stderr.on("data", (data) => {
+    console.error("yt-dlp:", data.toString().trim());
+  });
+
+  ytDlpProcess.on("close", (code) => {
+    if (code !== 0) {
+      console.error(`yt-dlp failed with exit code: ${code}`);
+    } else {
+      console.log("yt-dlp stream completed.");
+    }
+  });
+
+  // Keep the child process accessible for error monitoring.
+  const audioStream = ytDlpProcess.stdout;
+  audioStream.ytDlpProcess = ytDlpProcess;
+
+  return audioStream;
 }
 
 app.get("/", (req, res) => {
@@ -492,7 +477,7 @@ app.get("/api/download-file", async (req, res) => {
     // 3. CREATE AUDIO STREAM
     // =========================================================
 
-    const audioStream = streamAudio(url);
+    const audioStream = await streamAudio(url);
 
     if (!audioStream) {
       throw new Error(
