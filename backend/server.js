@@ -32,6 +32,9 @@ const PROGRESS_TTL = 30 * 60 * 1000;
 const TEMP_DIR = path.join(__dirname, "temp");
 const COOKIE_PATH = path.join(__dirname, "youtube-cookies.txt");
 const NODE_PATH = process.execPath;
+const FFMPEG_PATH = isProduction
+  ? path.join(__dirname, "bin", "ffmpeg")
+  : "ffmpeg";
 
 const YT_DLP_PATH = isProduction
   ? path.join(__dirname, ".venv", "bin", "yt-dlp")
@@ -144,14 +147,12 @@ if (cluster.isPrimary && WORKERS > 1) {
 function startWorker() {
   const express = require("express");
   const cors = require("cors");
-  const ffmpeg = require("fluent-ffmpeg");
   const sharp = require("sharp");
 
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 
   if (isProduction) {
     process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
-    ffmpeg.setFfmpegPath(path.join(__dirname, "bin", "ffmpeg"));
   }
 
   // ---- store client ------------------------------------------------------
@@ -608,72 +609,103 @@ function startWorker() {
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
       if (aborted) throw new Error("Client disconnected");
 
-      await new Promise((resolve, reject) => {
-        command = ffmpeg(ytProc.stdout);
-        if (hasCover) command.input(coverPath);
+      console.log(
+        `[${process.pid}] ${id}: cover=${hasCover ? "yes" : "NO"} title="${meta.title}"`,
+      );
 
-        const opts = [
-          "-map",
-          "0:a:0",
+      await new Promise((resolve, reject) => {
+        const clean = (v) =>
+          String(v || "")
+            .replace(/\u0000/g, "")
+            .trim();
+        const args = [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-nostats",
+          "-progress",
+          "pipe:1",
+          "-i",
+          "pipe:0",
+        ];
+        if (hasCover) args.push("-i", coverPath);
+
+        args.push("-map", "0:a:0");
+        if (hasCover) args.push("-map", "1:v:0");
+
+        args.push("-c:a", "libmp3lame", "-b:a", `${quality}k`);
+        if (hasCover) args.push("-c:v", "copy");
+
+        args.push(
           "-id3v2_version",
           "3",
           "-write_id3v1",
           "1",
           "-metadata",
-          `title=${meta.title}`,
+          `title=${clean(meta.title)}`,
           "-metadata",
-          `artist=${meta.singer}`,
+          `artist=${clean(meta.singer)}`,
           "-metadata",
-          `album=${meta.album || "YouTube Downloads"}`,
+          `album=${clean(meta.album) || "YouTube Downloads"}`,
           "-metadata",
-          `album_artist=${meta.singer}`,
+          `album_artist=${clean(meta.singer)}`,
           "-metadata",
           "genre=Music",
           "-metadata",
-          `date=${meta.releaseYear || ""}`,
-        ];
+          `date=${clean(meta.releaseYear)}`,
+        );
         if (hasCover) {
-          opts.push(
-            "-map",
-            "1:v:0",
-            "-c:v",
-            "copy",
-            "-metadata:s:v:0",
-            "title=Cover",
-            "-metadata:s:v:0",
+          args.push(
+            "-metadata:s:v",
+            "title=Album cover",
+            "-metadata:s:v",
             "comment=Cover (front)",
             "-disposition:v:0",
             "attached_pic",
           );
         }
+        args.push("-f", "mp3", "-y", outPath);
 
-        command
-          .audioCodec("libmp3lame")
-          .audioBitrate(`${quality}k`)
-          .format("mp3")
-          .outputOptions(opts)
-          .output(outPath)
-          .on("start", () =>
-            console.log(
-              `[${process.pid}] convert start ${id} (${downloadName})`,
-            ),
-          )
-          .on("progress", (p) => {
-            if (typeof p.timemark !== "string") return;
-            const [h, m, s] = p.timemark
-              .split(":")
-              .map((x) => parseFloat(x) || 0);
-            const secs = h * 3600 + m * 60 + s;
-            if (secs <= 0) return;
+        // args are passed as an array: no shell, no space-splitting problems
+        const ff = spawn(FFMPEG_PATH, args, {
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        command = ff;
+
+        ytProc.stdout.pipe(ff.stdin);
+        ff.stdin.on("error", () => {}); // ffmpeg may close stdin early
+        ytProc.stdout.on("error", () => {});
+
+        let errTail = "";
+        ff.stderr.on("data", (d) => (errTail = (errTail + d).slice(-2000)));
+
+        let buf = "";
+        ff.stdout.on("data", (d) => {
+          buf += d;
+          const lines = buf.split("\n");
+          buf = lines.pop();
+          for (const line of lines) {
+            const m = line.match(/^out_time_(?:us|ms)=(\d+)/);
+            if (!m) continue;
+            const secs = Number(m[1]) / 1e6;
+            if (secs <= 0) continue;
             const pct =
               meta.duration > 0
                 ? (secs / meta.duration) * 100
-                : 99 * (1 - Math.exp(-secs / 180)); // unknown length: smooth estimate
+                : 99 * (1 - Math.exp(-secs / 180));
             setProgress(id, Math.min(Math.max(Math.round(pct), 0), 99));
-          })
-          .on("error", reject)
-          .on("end", resolve)
-          .run();
+          }
+        });
+
+        ff.on("error", (e) =>
+          reject(new Error(`ffmpeg failed to start: ${e.message}`)),
+        );
+        ff.on("close", (code) => {
+          if (code === 0) return resolve();
+          reject(
+            new Error(`ffmpeg exited with code ${code}: ${errTail.trim()}`),
+          );
+        });
       });
 
       limiter.release(); // free CPU slot before streaming the file to the client
