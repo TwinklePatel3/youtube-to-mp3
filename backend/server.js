@@ -16,7 +16,8 @@ const isProduction = process.env.NODE_ENV === "production";
 const CPU_COUNT = os.availableParallelism
   ? os.availableParallelism()
   : os.cpus().length;
-const WORKERS = Number(process.env.WORKERS) || Math.min(CPU_COUNT, 4);
+const WORKERS =
+  Number(process.env.WORKERS) || (isProduction ? 1 : Math.min(CPU_COUNT, 4));
 const MAX_JOBS = Number(process.env.MAX_JOBS) || 2; // concurrent conversions PER worker
 const MAX_QUEUE = Number(process.env.MAX_QUEUE) || 20; // waiting jobs PER worker
 // Apple recommends square art between 1400 and 3000 px
@@ -32,20 +33,44 @@ const PROGRESS_TTL = 30 * 60 * 1000;
 const TEMP_DIR = path.join(__dirname, "temp");
 const COOKIE_PATH = path.join(__dirname, "youtube-cookies.txt");
 const NODE_PATH = process.execPath;
-const FFMPEG_PATH = isProduction
-  ? path.join(__dirname, "bin", "ffmpeg")
-  : "ffmpeg";
 
-const YT_DLP_PATH = isProduction
-  ? path.join(__dirname, ".venv", "bin", "yt-dlp")
-  : "yt-dlp";
+// Resolve binaries: env override -> bundled locations -> system PATH
+function resolveBinary(envName, candidates, fallback) {
+  if (process.env[envName]) return process.env[envName];
+  for (const c of candidates) {
+    try {
+      if (c && fs.existsSync(c)) return c;
+    } catch {}
+  }
+  return fallback;
+}
+let ffmpegStatic = null;
+try {
+  ffmpegStatic = require("ffmpeg-static"); // optional: npm i ffmpeg-static
+} catch {}
 
+const FFMPEG_PATH = resolveBinary(
+  "FFMPEG_PATH",
+  [path.join(__dirname, "bin", "ffmpeg"), ffmpegStatic],
+  "ffmpeg",
+);
+const YT_DLP_PATH = resolveBinary(
+  "YT_DLP_PATH",
+  [
+    path.join(__dirname, ".venv", "bin", "yt-dlp"),
+    path.join(__dirname, "bin", "yt-dlp"),
+  ],
+  "yt-dlp",
+);
+
+// CORS_ORIGINS="*" allows every origin; otherwise a comma-separated list.
+const ALLOW_ALL_ORIGINS = process.env.CORS_ORIGINS === "*";
 const ALLOWED_ORIGINS = (
   process.env.CORS_ORIGINS ||
   "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
 )
   .split(",")
-  .map((s) => s.trim())
+  .map((s) => s.trim().replace(/\/$/, "")) // tolerate a trailing slash
   .filter(Boolean);
 
 // ---------------------------------------------------------------------------
@@ -498,7 +523,7 @@ function startWorker() {
   app.disable("x-powered-by");
   app.use(
     cors({
-      origin: ALLOWED_ORIGINS,
+      origin: ALLOW_ALL_ORIGINS ? true : ALLOWED_ORIGINS,
       exposedHeaders: ["X-Download-ID", "Content-Disposition"],
     }),
   );
@@ -506,12 +531,51 @@ function startWorker() {
 
   app.get("/", (req, res) => res.send("Backend is working"));
 
+  // ---- startup self-check (shows up in Render logs and /health) --------------
+  const run = (cmd, args) =>
+    new Promise((resolve) => {
+      const c = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      c.stdout.on("data", (d) => (out += d));
+      c.stderr.on("data", (d) => (out += d));
+      c.on("error", (e) => resolve({ ok: false, out: e.message }));
+      c.on("close", (code) => resolve({ ok: code === 0, out }));
+    });
+
+  let toolStatus = { checking: true };
+  (async () => {
+    const [yt, ff, enc] = await Promise.all([
+      run(YT_DLP_PATH, ["--version"]),
+      run(FFMPEG_PATH, ["-version"]),
+      run(FFMPEG_PATH, ["-hide_banner", "-encoders"]),
+    ]);
+    toolStatus = {
+      ytDlp: yt.ok
+        ? yt.out.trim()
+        : `MISSING (${YT_DLP_PATH}): ${yt.out.trim().slice(0, 120)}`,
+      ffmpeg: ff.ok
+        ? ff.out.split("\n")[0]
+        : `MISSING (${FFMPEG_PATH}): ${ff.out.trim().slice(0, 120)}`,
+      mp3Encoder: enc.ok && /libmp3lame/.test(enc.out),
+      cookiesFile: fs.existsSync(COOKIE_PATH),
+      node: process.version,
+    };
+    console.log(`[${process.pid}] TOOL CHECK:`, JSON.stringify(toolStatus));
+    if (!toolStatus.mp3Encoder)
+      console.error(
+        "WARNING: ffmpeg has no libmp3lame, MP3 conversion will fail.",
+      );
+  })();
+
   app.get("/health", (req, res) =>
     res.json({
       ok: true,
       pid: process.pid,
       activeJobs: limiter.active,
       queued: limiter.waiting,
+      workers: WORKERS,
+      allowedOrigins: ALLOW_ALL_ORIGINS ? "*" : ALLOWED_ORIGINS,
+      tools: toolStatus,
     }),
   );
 
