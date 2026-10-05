@@ -212,7 +212,6 @@ function App() {
       const targetId = await requestDownload(url.trim(), quality);
 
       // Give SSE a little time to connect
-      await new Promise((resolve) => setTimeout(resolve, 700));
 
       // If progress has not started yet, keep preparing state
       setIsPreparing(false);
