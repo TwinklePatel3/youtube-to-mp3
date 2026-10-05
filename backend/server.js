@@ -80,9 +80,7 @@ async function fetchVideoMeta(url) {
       "--skip-download",
       "--no-playlist",
       "--no-warnings",
-      "--no-check-formats",
-      "--extractor-args",
-      "youtube:player_client=web",
+      "--ignore-no-formats-error", // metadata doesn't need formats
       "--js-runtimes",
       `node:${NODE_PATH}`,
     ];
@@ -187,12 +185,10 @@ function streamAudio(url) {
   const spawnArgs = [
     "--no-warnings",
     "--no-playlist",
-    "--no-check-certificates",
-    "--no-check-formats",
     "--js-runtimes",
     `node:${NODE_PATH}`,
     "--format",
-    "ba/b",
+    "bestaudio/best",
     "--output",
     "-",
   ];
