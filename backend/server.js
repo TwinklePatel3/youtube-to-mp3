@@ -483,7 +483,7 @@ app.get("/api/download-file", async (req, res) => {
     // 3. CREATE AUDIO STREAM
     // =========================================================
 
-    const audioStream = streamAudio(url);
+    const audioStream = await streamAudio(url);
 
     if (!audioStream) {
       throw new Error(
