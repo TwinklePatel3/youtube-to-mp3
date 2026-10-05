@@ -81,8 +81,6 @@ async function fetchVideoMeta(url) {
       "--no-playlist",
       "--no-warnings",
       "--no-check-formats",
-      "--js-runtimes",
-      `node:${NODE_PATH}`,
     ];
 
     // Add cookies only if the file exists
@@ -187,8 +185,6 @@ function streamAudio(url) {
     "--no-playlist",
     "--no-check-certificates",
     "--no-check-formats",
-    "--js-runtimes",
-    `node:${NODE_PATH}`,
     "--format",
     "ba/b",
     "--output",
