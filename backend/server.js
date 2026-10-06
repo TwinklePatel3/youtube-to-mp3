@@ -462,20 +462,20 @@ function startWorker() {
         ...splitNames(credits.singers, true),
       ]);
     }
-    let singer = names.join(", ");
+    let artist = names.join(", ");
 
     const cleanedTitle = cleanTitle(v.title || o.title);
     let title = v.track || cleanedTitle || `audio-${Date.now()}`;
     const parsed = v.track ? null : parseArtistTitle(cleanedTitle);
     if (parsed) {
-      if (!singer) {
-        singer = uniqueNames(splitNames(parsed.artist)).join(", ");
+      if (!artist) {
+        artist = uniqueNames(splitNames(parsed.artist)).join(", ");
         title = parsed.song;
-      } else if (singer.toLowerCase().includes(parsed.artist.toLowerCase())) {
+      } else if (artist.toLowerCase().includes(parsed.artist.toLowerCase())) {
         title = parsed.song; // title repeated the artist: keep only the song name
       }
     }
-    if (!singer) singer = cleanArtist(channel) || "Unknown Artist";
+    if (!artist) artist = cleanArtist(channel) || "Unknown Artist";
 
     const composer = uniqueNames(splitNames(credits.composer || "", true)).join(
       ", ",
@@ -493,7 +493,7 @@ function startWorker() {
 
     return {
       title,
-      singer,
+      artist,
       composer,
       channel: channel || "Unknown Channel",
       album: v.album || "",
@@ -505,10 +505,138 @@ function startWorker() {
     };
   }
 
+  // Rich metadata is kept locally and in the shared store (so any worker can serve it).
   function cacheMeta(videoId, meta) {
     metaCache.set(videoId, { meta, exp: Date.now() + META_TTL });
     if (metaCache.size > 500) metaCache.delete(metaCache.keys().next().value);
+    return store.set(`meta:${videoId}`, meta, META_TTL);
   }
+
+  async function getCachedMeta(videoId) {
+    const hit = metaCache.get(videoId);
+    if (hit && hit.exp > Date.now()) return hit.meta;
+    return (await store.get(`meta:${videoId}`)) || null;
+  }
+
+  // ---- background "full details" lookup for the preview card ------------------------
+  // One low-priority yt-dlp run per worker. It is cancelled as soon as the user starts the
+  // download (the download's own yt-dlp run supplies the same data), so they never compete.
+  const BACKGROUND_META = process.env.BACKGROUND_META !== "0";
+  const metaLimiter = new Limiter(1);
+  const metaJobs = new Map(); // videoId -> { proc, cancelled }
+
+  function spawnInfoJson(url) {
+    const args = [
+      "--ignore-config",
+      "--dump-single-json",
+      "--skip-download",
+      "--ignore-no-formats-error",
+      ...ytDlpBaseArgs(),
+      url,
+    ];
+    const proc = spawn(YT_DLP_PATH, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    let err = "";
+    proc.stdout.on("data", (d) => (out += d));
+    proc.stderr.on("data", (d) => (err = (err + d).slice(-1500)));
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        proc.kill("SIGKILL");
+        reject(new Error("yt-dlp metadata timed out"));
+      }, INFO_TIMEOUT);
+      proc.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+      // killed (cancelled / timeout): finish immediately, don't wait for pipes to drain
+      proc.on("exit", (code, signal) => {
+        if (signal) {
+          clearTimeout(timer);
+          reject(new Error(`yt-dlp stopped (${signal})`));
+        }
+      });
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (code !== 0)
+          return reject(
+            new Error(err.trim() || `yt-dlp exited with code ${code}`),
+          );
+        try {
+          resolve(JSON.parse(out));
+        } catch {
+          reject(new Error("Could not parse yt-dlp JSON"));
+        }
+      });
+    });
+    return { proc, promise };
+  }
+
+  function startMetaFetch(videoId, url) {
+    if (!BACKGROUND_META || metaJobs.has(videoId)) return;
+    const job = { proc: null, cancelled: false };
+    metaJobs.set(videoId, job);
+
+    (async () => {
+      let acquired = false;
+      let watcher = null;
+      try {
+        await metaLimiter.acquire();
+        acquired = true;
+        // a download for this video already started (or is running): its own yt-dlp run supplies the data
+        if (job.cancelled || (await store.get(`metastop:${videoId}`))) return;
+
+        const { proc, promise } = spawnInfoJson(url);
+        job.proc = proc;
+        // cancellation may come from another worker (cluster) through the shared store
+        watcher = setInterval(async () => {
+          if (await store.get(`metastop:${videoId}`)) {
+            job.cancelled = true;
+            proc.kill("SIGKILL");
+          }
+        }, 1000);
+
+        const [info, o] = await Promise.all([
+          promise,
+          fetchOEmbed(url).catch(() => null),
+        ]);
+        if (job.cancelled) return;
+        await cacheMeta(videoId, buildMeta(info, o));
+      } catch (e) {
+        if (!job.cancelled) {
+          console.error("background metadata failed:", e.message);
+          await store.set(`metafail:${videoId}`, 1, 120_000);
+        }
+      } finally {
+        if (watcher) clearInterval(watcher);
+        if (acquired) metaLimiter.release();
+        metaJobs.delete(videoId);
+      }
+    })();
+  }
+
+  function cancelMetaFetch(videoId) {
+    store.set(`metastop:${videoId}`, 1, 10 * 60_000);
+    const job = metaJobs.get(videoId);
+    if (job) {
+      job.cancelled = true;
+      if (job.proc) job.proc.kill("SIGKILL");
+    }
+  }
+
+  const publicMeta = (m, detailsReady) => ({
+    song_name: m.title,
+    artist: m.artist,
+    singer: m.artist, // legacy alias for older frontends
+    channel: m.channel,
+    album: m.album || "",
+    duration: m.duration,
+    cover: m.squareCover || m.cover, // prefer real square album art
+    releaseYear: m.releaseYear,
+    composer: m.composer || "",
+    detailsReady,
+  });
 
   // ---- cover art -----------------------------------------------------------
   async function fetchImage(url) {
@@ -704,32 +832,36 @@ function startWorker() {
   );
 
   // Metadata only (for preview)
+  // Instant preview (oEmbed) - full details are fetched in the background
   app.post("/api/song", async (req, res) => {
     const parsed = parseYouTubeUrl(req.body?.url);
     if (!parsed)
       return res.status(400).json({ error: "A valid YouTube URL is required" });
     try {
-      const hit = metaCache.get(parsed.id);
-      let m;
-      if (hit && hit.exp > Date.now()) {
-        m = hit.meta;
-      } else {
+      let m = await getCachedMeta(parsed.id);
+      let detailsReady = !!m;
+      if (!m) {
         const o = await fetchOEmbed(parsed.url);
         m = buildMeta(null, o);
+        startMetaFetch(parsed.id, parsed.url);
       }
-      res.json({
-        song_name: m.title,
-        singer: m.singer,
-        channel: m.channel,
-        album: m.album,
-        duration: m.duration,
-        cover: m.cover,
-        releaseYear: m.releaseYear,
-      });
+      res.json(publicMeta(m, detailsReady));
     } catch (e) {
       console.error("SONG METADATA ERROR:", e.message);
       res.status(500).json({ error: "Could not retrieve video information" });
     }
+  });
+
+  // Poll this until { ready: true } to upgrade the preview with the full details
+  app.post("/api/song-details", async (req, res) => {
+    const parsed = parseYouTubeUrl(req.body?.url);
+    if (!parsed)
+      return res.status(400).json({ error: "A valid YouTube URL is required" });
+    const m = await getCachedMeta(parsed.id);
+    if (m) return res.json({ ready: true, ...publicMeta(m, true) });
+    const failed = !!(await store.get(`metafail:${parsed.id}`));
+    if (!failed) startMetaFetch(parsed.id, parsed.url); // no-op if already running
+    res.json({ ready: false, failed });
   });
 
   // PHASE 1: register a download job (fast)
@@ -774,6 +906,7 @@ function startWorker() {
     }
 
     const { videoId, url, quality } = job;
+    cancelMetaFetch(videoId); // the download run supplies the same metadata
     const outPath = path.join(TEMP_DIR, `${id}.mp3`);
     const coverPath = path.join(TEMP_DIR, `${id}.jpg`);
     let downloadName = "audio.mp3";
@@ -814,10 +947,8 @@ function startWorker() {
         console.warn(
           `[${process.pid}] ${id}: no yt-dlp info JSON, using oEmbed tags only`,
         );
-      console.log(meta, "meta");
-
       cacheMeta(videoId, meta);
-      downloadName = `${safeFileName(meta.singer && meta.singer !== "Unknown Artist" ? `${meta.singer} - ${meta.title}` : meta.title)} [${quality}kbps].mp3`;
+      downloadName = `${safeFileName(meta.artist && meta.artist !== "Unknown Artist" ? `${meta.artist} - ${meta.title}` : meta.title)} [${quality}kbps].mp3`;
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
       if (aborted) throw new Error("Client disconnected");
 
@@ -863,11 +994,11 @@ function startWorker() {
           "-metadata",
           `title=${clean(meta.title)}`,
           "-metadata",
-          `artist=${clean(meta.singer)}`,
+          `artist=${clean(meta.artist)}`,
           "-metadata",
           `album=${clean(meta.album) || clean(meta.title)}`,
           "-metadata",
-          `album_artist=${clean(meta.singer)}`,
+          `album_artist=${clean(meta.artist)}`,
           ...(meta.composer
             ? ["-metadata", `composer=${clean(meta.composer)}`]
             : []),
