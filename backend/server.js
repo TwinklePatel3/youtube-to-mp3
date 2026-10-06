@@ -343,19 +343,97 @@ function startWorker() {
       .replace(/(?<=.)VEVO$/i, "")
       .trim();
 
-  // "Artist - Song (Official Video)" -> { artist: "Artist", song: "Song" }
+  // ---- artist list helpers -------------------------------------------------------
+  /** "A, B & C" / "A feat. B" / ["A","B"]  ->  ["A","B","C"]  (keeps "Simon & Garfunkel" intact) */
+  function splitNames(input, alwaysAmp = false) {
+    const out = [];
+    for (const raw of Array.isArray(input) ? input : [input]) {
+      const str = String(raw || "").trim();
+      if (!str) continue;
+      const segs = str
+        .split(/\s*[;,]\s*|\s+(?:feat\.?|ft\.?|featuring)\s+/i)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (segs.length > 1 || alwaysAmp) {
+        // list style ("A, B & C"): the last item may be joined with & / and
+        const last = segs.pop();
+        segs.push(
+          ...last
+            .split(/\s+(?:&|and)\s+/i)
+            .map((x) => x.trim())
+            .filter(Boolean),
+        );
+      }
+      out.push(...segs);
+    }
+    return out;
+  }
+
+  function uniqueNames(list) {
+    const seen = new Set();
+    return list
+      .map((n) => n.replace(/^[\s\-–—·•]+|[\s\-–—·•]+$/g, "").trim())
+      .filter(
+        (n) =>
+          n &&
+          n.length <= 80 &&
+          !seen.has(n.toLowerCase()) &&
+          seen.add(n.toLowerCase()),
+      );
+  }
+
+  /** Credits found in a video description (labels / auto-generated music block). */
+  function creditsFromDescription(desc) {
+    const text = String(desc || "").slice(0, 8000);
+    if (!text) return {};
+
+    // Auto-generated: "Provided to YouTube by X\n\nSong · Artist1 · Artist2 ..."
+    const prov = text.match(/Provided to YouTube by[^\n]*\n+\s*([^\n]+)/i);
+    if (prov && prov[1].includes(" · ")) {
+      const parts = prov[1].split(" · ").map((x) => x.trim());
+      parts.shift(); // song title
+      if (parts.length) return { artists: parts };
+    }
+
+    // Label style: "Singer: A, B" / "Music: C" (also several on one line separated by | or •)
+    const grab = (re) => {
+      const m = text.match(re);
+      if (!m) return "";
+      return m[1]
+        .split(/\s+[|•]\s+/)[0]
+        .replace(/https?:\/\/\S+/g, "")
+        .replace(/\([^)]*\)/g, "")
+        .trim();
+    };
+    const composer = grab(
+      /(?:^|\n|[|•])\s*(?:music(?:\s*(?:director|composed(?:\s*by)?|by))?|composer|composed\s*by)\s*[:\-–—]\s*([^\n]+)/i,
+    );
+    const singers = grab(
+      /(?:^|\n|[|•])\s*(?:singers?|vocals?|sung\s*by|performed\s*by|artists?)\s*[:\-–—]\s*([^\n]+)/i,
+    );
+    return { composer, singers };
+  }
+
+  // Removes "(Official Video)", "[Lyrical Video]", "(Full Song)", "(HD)" ... but keeps "(From "Movie")", "(Remix)"
   const NOISE_RE =
-    /\s*[\(\[]\s*(?:official\s*)?(?:music\s*|lyric\s*|audio\s*|hd\s*|4k\s*)*(?:video|audio|lyrics?|visuali[sz]er|mv)\s*(?:hd|4k)?\s*[\)\]]\s*/gi;
+    /\s*[\(\[][^\)\]]*\b(?:official|video|audio|lyrics?|lyrical|visuali[sz]er|mv|full\s+song|hd|4k)\b[^\)\]]*[\)\]]\s*/gi;
+  /** "Song (Full Video) | Movie | Cast" -> "Song" */
+  function cleanTitle(raw) {
+    const first = String(raw || "").split(/\s+[|\uFF5C]\s+/)[0];
+    const cleaned = first
+      .replace(NOISE_RE, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    return cleaned || String(raw || "").trim();
+  }
+  // "Artist - Song" -> { artist: "Artist", song: "Song" }
   function parseArtistTitle(raw) {
     const m = String(raw || "")
       .trim()
       .match(/^(.{1,70}?)\s+[-\u2013\u2014]\s+(.+)$/);
     if (!m) return null;
     const artist = m[1].trim();
-    const song = m[2]
-      .replace(NOISE_RE, " ")
-      .replace(/\s{2,}/g, " ")
-      .trim();
+    const song = cleanTitle(m[2]);
     return artist && song ? { artist, song } : null;
   }
 
@@ -364,25 +442,44 @@ function startWorker() {
     v = v || {};
     o = o || {};
     const channel = v.channel || v.uploader || o.author_name || "";
-    // Artist priority: 1) official artist fields  2) "Artist - Song" in the title  3) channel name
-    let singer =
-      (Array.isArray(v.artists) ? v.artists.join(", ") : "") ||
-      v.artist ||
-      v.track_artist ||
-      v.album_artist ||
-      "";
-    let title = v.track || v.title || o.title || `audio-${Date.now()}`;
 
-    const parsed = v.track ? null : parseArtistTitle(v.title || o.title);
+    // Artist priority:
+    //  1) official artist fields   2) "Provided to YouTube" block   3) description credits (singers + music)
+    //  4) "Artist - Song" in the title   5) channel name
+    const credits = creditsFromDescription(v.description);
+    let names = uniqueNames(
+      splitNames(
+        Array.isArray(v.artists) && v.artists.length
+          ? v.artists
+          : [v.artist || v.track_artist || v.album_artist || ""],
+      ),
+    );
+    if (!names.length && credits.artists)
+      names = uniqueNames(splitNames(credits.artists, true));
+    if (!names.length && credits.singers) {
+      names = uniqueNames([
+        ...splitNames(credits.composer, true),
+        ...splitNames(credits.singers, true),
+      ]);
+    }
+    let singer = names.join(", ");
+
+    const cleanedTitle = cleanTitle(v.title || o.title);
+    let title = v.track || cleanedTitle || `audio-${Date.now()}`;
+    const parsed = v.track ? null : parseArtistTitle(cleanedTitle);
     if (parsed) {
       if (!singer) {
-        singer = parsed.artist;
+        singer = uniqueNames(splitNames(parsed.artist)).join(", ");
         title = parsed.song;
       } else if (singer.toLowerCase().includes(parsed.artist.toLowerCase())) {
         title = parsed.song; // title repeated the artist: keep only the song name
       }
     }
     if (!singer) singer = cleanArtist(channel) || "Unknown Artist";
+
+    const composer = uniqueNames(splitNames(credits.composer || "", true)).join(
+      ", ",
+    );
     const uploadDate = String(v.upload_date || "");
     const releaseYear = v.release_year
       ? String(v.release_year)
@@ -392,11 +489,12 @@ function startWorker() {
     const squareCover =
       (Array.isArray(v.thumbnails) ? v.thumbnails : [])
         .filter((t) => t.url && t.width && t.width === t.height)
-        .sort((a, b) => b.width - a.width)[0]?.url || "";
+        .sort((x, y) => y.width - x.width)[0]?.url || "";
 
     return {
       title,
       singer,
+      composer,
       channel: channel || "Unknown Channel",
       album: v.album || "",
       duration: Number(v.duration) || 0,
@@ -716,6 +814,8 @@ function startWorker() {
         console.warn(
           `[${process.pid}] ${id}: no yt-dlp info JSON, using oEmbed tags only`,
         );
+      console.log(meta, "meta");
+
       cacheMeta(videoId, meta);
       downloadName = `${safeFileName(meta.singer && meta.singer !== "Unknown Artist" ? `${meta.singer} - ${meta.title}` : meta.title)} [${quality}kbps].mp3`;
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
@@ -768,6 +868,9 @@ function startWorker() {
           `album=${clean(meta.album) || clean(meta.title)}`,
           "-metadata",
           `album_artist=${clean(meta.singer)}`,
+          ...(meta.composer
+            ? ["-metadata", `composer=${clean(meta.composer)}`]
+            : []),
           "-metadata",
           "genre=Music",
           "-metadata",
