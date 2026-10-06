@@ -343,6 +343,10 @@ function startWorker() {
       .replace(/(?<=.)VEVO$/i, "")
       .trim();
 
+  // Record-label channels upload "Song - Movie" titles; artist / VEVO channels use "Artist - Song"
+  const LABEL_CHANNEL_RE =
+    /\b(t-?series|zee music|sony music|saregama|tips|eros now|times music|speed records|yrf|venus|universal music|warner music|lahari|aditya music|think music|muzik247)\b/i;
+
   // ---- artist list helpers -------------------------------------------------------
   /** "A, B & C" / "A feat. B" / ["A","B"]  ->  ["A","B","C"]  (keeps "Simon & Garfunkel" intact) */
   function splitNames(input, alwaysAmp = false) {
@@ -386,13 +390,17 @@ function startWorker() {
   function creditsFromDescription(desc) {
     const text = String(desc || "").slice(0, 8000);
     if (!text) return {};
+    const year =
+      (text.match(/(?:\u2117|\u00a9|\(c\)|\(p\))\s*(\d{4})/i) ||
+        text.match(/Released on:\s*(\d{4})/i) ||
+        [])[1] || "";
 
     // Auto-generated: "Provided to YouTube by X\n\nSong · Artist1 · Artist2 ..."
     const prov = text.match(/Provided to YouTube by[^\n]*\n+\s*([^\n]+)/i);
     if (prov && prov[1].includes(" · ")) {
       const parts = prov[1].split(" · ").map((x) => x.trim());
       parts.shift(); // song title
-      if (parts.length) return { artists: parts };
+      if (parts.length) return { artists: parts, year };
     }
 
     // Label style: "Singer: A, B" / "Music: C" (also several on one line separated by | or •)
@@ -411,7 +419,7 @@ function startWorker() {
     const singers = grab(
       /(?:^|\n|[|•])\s*(?:singers?|vocals?|sung\s*by|performed\s*by|artists?)\s*[:\-–—]\s*([^\n]+)/i,
     );
-    return { composer, singers };
+    return { composer, singers, year };
   }
 
   // Removes "(Official Video)", "[Lyrical Video]", "(Full Song)", "(HD)" ... but keeps "(From "Movie")", "(Remix)"
@@ -467,14 +475,33 @@ function startWorker() {
     const cleanedTitle = cleanTitle(v.title || o.title);
     let title = v.track || cleanedTitle || `audio-${Date.now()}`;
     const parsed = v.track ? null : parseArtistTitle(cleanedTitle);
+    let albumGuess = "";
     if (parsed) {
+      const known = artist.toLowerCase();
+      const isArtist = (x) => x.length > 2 && known.includes(x.toLowerCase());
       if (!artist) {
-        artist = uniqueNames(splitNames(parsed.artist)).join(", ");
-        title = parsed.song;
-      } else if (artist.toLowerCase().includes(parsed.artist.toLowerCase())) {
-        title = parsed.song; // title repeated the artist: keep only the song name
+        // no credits: "Artist - Song" on artist channels; label channels mean "Song - Movie", keep the title whole
+        if (!LABEL_CHANNEL_RE.test(channel)) {
+          artist = uniqueNames(splitNames(parsed.artist)).join(", ");
+          title = parsed.song;
+        }
+      } else if (isArtist(parsed.artist)) {
+        title = parsed.song; // "Artist - Song"
+      } else if (isArtist(parsed.song)) {
+        title = parsed.artist; // "Song - Artist"
+      } else {
+        title = parsed.artist; // "Song - Movie": song is the title, the movie is the album
+        albumGuess = parsed.song;
       }
     }
+    // alternative readings of "A - B", used when searching Apple Music
+    const titleCandidates = [
+      ...new Set(
+        [title, ...(parsed ? [parsed.artist, parsed.song] : [])]
+          .map((t) => t.trim())
+          .filter((t) => t.length > 1),
+      ),
+    ];
     if (!artist) artist = cleanArtist(channel) || "Unknown Artist";
 
     const composer = uniqueNames(splitNames(credits.composer || "", true)).join(
@@ -483,7 +510,7 @@ function startWorker() {
     const uploadDate = String(v.upload_date || "");
     const releaseYear = v.release_year
       ? String(v.release_year)
-      : String(v.release_date || uploadDate).slice(0, 4);
+      : String(v.release_date || "").slice(0, 4) || credits.year || "";
 
     // YouTube Music / "Topic" uploads expose real square album art
     const squareCover =
@@ -493,10 +520,12 @@ function startWorker() {
 
     return {
       title,
+      rawTitle: String(v.title || o.title || ""),
       artist,
       composer,
       channel: channel || "Unknown Channel",
-      album: v.album || "",
+      album: v.album || albumGuess || "",
+      titleCandidates,
       duration: Number(v.duration) || 0,
       cover: v.thumbnail || o.thumbnail_url || "",
       squareCover,
@@ -602,7 +631,10 @@ function startWorker() {
           fetchOEmbed(url).catch(() => null),
         ]);
         if (job.cancelled) return;
-        await cacheMeta(videoId, buildMeta(info, o));
+        await cacheMeta(
+          videoId,
+          await enrichWithItunes(videoId, buildMeta(info, o)),
+        );
       } catch (e) {
         if (!job.cancelled) {
           console.error("background metadata failed:", e.message);
@@ -635,8 +667,185 @@ function startWorker() {
     cover: m.squareCover || m.cover, // prefer real square album art
     releaseYear: m.releaseYear,
     composer: m.composer || "",
+    genre: m.genre || "",
+    verified: !!m.verified,
     detailsReady,
   });
+
+  // ---- Apple Music (iTunes Search API) matching --------------------------------------
+  // Gives the real artist list, album, year, genre and official square cover. It only
+  // overrides the YouTube data when the match is confident (wrong tags are worse than basic tags).
+  const ITUNES_ENABLED = process.env.ITUNES !== "0";
+  const ITUNES_COUNTRIES = (process.env.ITUNES_COUNTRIES || "IN,US")
+    .split(",")
+    .map((x) => x.trim().toUpperCase())
+    .filter(Boolean);
+  const LABEL_RE =
+    /\b(t-?series|zee music|sony music|saregama|tips (?:official|music)|eros now|times music|speed records|yrf|universal music|warner|vevo|records|official)\b/i;
+
+  const plain = (x) =>
+    String(x || "")
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const normTitle = (x) =>
+    plain(String(x || "").replace(/[\(\[][^\)\]]*[\)\]]/g, " "));
+
+  function titleSimilarity(a, b) {
+    const x = normTitle(a);
+    const y = normTitle(b);
+    if (!x || !y) return 0;
+    if (x === y) return 1;
+    const A = new Set(x.split(" "));
+    const B = new Set(y.split(" "));
+    let inter = 0;
+    for (const w of A) if (B.has(w)) inter++;
+    const jaccard = inter / (A.size + B.size - inter);
+    const [small, big] = A.size <= B.size ? [A, B] : [B, A];
+    const contained = small.size >= 2 && [...small].every((w) => big.has(w));
+    return Math.max(jaccard, contained ? 0.85 : 0);
+  }
+
+  function pickItunesMatch(results, q) {
+    const hints = plain(`${q.rawTitle} ${q.channel} ${q.artist}`);
+    const cands = [];
+    for (const c of results || []) {
+      if (!c.trackName || !c.artistName) continue;
+      const sim = Math.max(
+        ...q.titles.map((t) => titleSimilarity(c.trackName, t)),
+      );
+      if (sim < 0.7) continue;
+      const artistOk = splitNames(c.artistName).some((n) => {
+        const p = plain(n);
+        return p.length > 2 && hints.includes(p);
+      });
+      const durOk =
+        q.duration > 0 &&
+        c.trackTimeMillis &&
+        Math.abs(c.trackTimeMillis / 1000 - q.duration) <= 8;
+      // movie / album name appears in the video title ("Song | Aashiqui 2 | ..."); a single named
+      // after the song itself says nothing, so it is excluded
+      const alb = normTitle(
+        String(c.collectionName || "").replace(/\s+-\s+(?:single|ep)$/i, ""),
+      );
+      const albumOk =
+        alb.length >= 4 &&
+        alb !== normTitle(c.trackName) &&
+        hints.includes(alb);
+      cands.push({
+        c,
+        sim,
+        artistOk,
+        durOk,
+        albumOk,
+        score:
+          sim + (artistOk ? 0.3 : 0) + (durOk ? 0.3 : 0) + (albumOk ? 0.3 : 0),
+      });
+    }
+    // artist / duration support is enough; an album-name hit only counts for a (near) exact title
+    const supported = cands
+      .filter((x) => x.artistOk || x.durOk || (x.albumOk && x.sim >= 0.95))
+      .sort((a, b) => b.score - a.score);
+    if (supported.length) return supported[0].c;
+    const exact = cands.filter((x) => x.sim === 1); // unambiguous exact title is enough
+    return exact.length === 1 ? exact[0].c : null;
+  }
+
+  async function findItunes(meta) {
+    const hint =
+      meta.artist &&
+      meta.artist !== "Unknown Artist" &&
+      !LABEL_RE.test(meta.artist)
+        ? meta.artist.split(",").slice(0, 2).join(" ")
+        : "";
+    const titles =
+      meta.titleCandidates && meta.titleCandidates.length
+        ? meta.titleCandidates.slice(0, 3)
+        : [meta.title];
+    const q = {
+      titles,
+      title: meta.title,
+      rawTitle: meta.rawTitle || meta.title,
+      channel: meta.channel,
+      artist: meta.artist,
+      duration: meta.duration,
+    };
+    const terms = hint
+      ? [...titles.map((t) => `${t} ${hint}`), ...titles]
+      : titles;
+    const signal = AbortSignal.timeout(5000);
+    for (const country of ITUNES_COUNTRIES) {
+      for (const term of terms) {
+        try {
+          const params = new URLSearchParams({
+            term,
+            media: "music",
+            entity: "song",
+            limit: "10",
+            country,
+          });
+          const r = await fetch(`https://itunes.apple.com/search?${params}`, {
+            signal,
+          });
+          if (!r.ok) continue;
+          const hit = pickItunesMatch((await r.json()).results, q);
+          if (hit) return hit;
+        } catch {
+          return null; // timeout / network problem: keep the YouTube data
+        }
+      }
+    }
+    return null;
+  }
+
+  const hiResArt = (u) =>
+    u
+      ? String(u).replace(
+          /\/\d+x\d+(?:bb|cc)?\.(?:jpg|png|webp)$/i,
+          "/1400x1400bb.jpg",
+        )
+      : "";
+
+  function applyItunes(meta, t) {
+    const names = uniqueNames(splitNames(t.artistName));
+    return {
+      ...meta,
+      title: t.trackName || meta.title,
+      artist: names.join(", ") || meta.artist,
+      album: t.collectionName || meta.album,
+      releaseYear: String(t.releaseDate || "").slice(0, 4) || meta.releaseYear,
+      genre: t.primaryGenreName || "",
+      trackNumber: t.trackNumber || 0,
+      trackCount: t.trackCount || 0,
+      squareCover: hiResArt(t.artworkUrl100) || meta.squareCover,
+      verified: true,
+    };
+  }
+
+  async function enrichWithItunes(videoId, meta) {
+    if (!ITUNES_ENABLED || !meta || !meta.title) return meta;
+    const key = `itunes:${videoId}:${meta.duration > 0 ? "d" : "n"}`; // better matching once duration is known
+    let entry = await store.get(key);
+    if (!entry) {
+      const t = await findItunes(meta);
+      entry = {
+        hit: t && {
+          trackName: t.trackName,
+          artistName: t.artistName,
+          collectionName: t.collectionName,
+          releaseDate: t.releaseDate,
+          primaryGenreName: t.primaryGenreName,
+          trackNumber: t.trackNumber,
+          trackCount: t.trackCount,
+          artworkUrl100: t.artworkUrl100,
+        },
+      };
+      store.set(key, entry, t ? 24 * 3600_000 : 10 * 60_000);
+    }
+    return entry.hit ? applyItunes(meta, entry.hit) : meta;
+  }
 
   // ---- cover art -----------------------------------------------------------
   async function fetchImage(url) {
@@ -842,7 +1051,7 @@ function startWorker() {
       let detailsReady = !!m;
       if (!m) {
         const o = await fetchOEmbed(parsed.url);
-        m = buildMeta(null, o);
+        m = await enrichWithItunes(parsed.id, buildMeta(null, o));
         startMetaFetch(parsed.id, parsed.url);
       }
       res.json(publicMeta(m, detailsReady));
@@ -942,13 +1151,16 @@ function startWorker() {
 
       const info = await started.infoReady; // arrives just before audio starts flowing
       if (aborted) throw new Error("Client disconnected");
-      const meta = buildMeta(info, await oembedP);
+      const meta = await enrichWithItunes(
+        videoId,
+        buildMeta(info, await oembedP),
+      );
       if (!info)
         console.warn(
           `[${process.pid}] ${id}: no yt-dlp info JSON, using oEmbed tags only`,
         );
       cacheMeta(videoId, meta);
-      downloadName = `${safeFileName(meta.artist && meta.artist !== "Unknown Artist" ? `${meta.artist} - ${meta.title}` : meta.title)} [${quality}kbps].mp3`;
+      downloadName = `${meta.title} [${quality}kbps].mp3`;
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
       if (aborted) throw new Error("Client disconnected");
 
@@ -1003,7 +1215,13 @@ function startWorker() {
             ? ["-metadata", `composer=${clean(meta.composer)}`]
             : []),
           "-metadata",
-          "genre=Music",
+          `genre=${clean(meta.genre) || "Music"}`,
+          ...(meta.trackNumber
+            ? [
+                "-metadata",
+                `track=${meta.trackNumber}${meta.trackCount ? "/" + meta.trackCount : ""}`,
+              ]
+            : []),
           "-metadata",
           `date=${clean(meta.releaseYear)}`,
         );
