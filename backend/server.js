@@ -985,8 +985,30 @@ function startWorker() {
   app.disable("x-powered-by");
   app.use(
     cors({
-      origin: ALLOW_ALL_ORIGINS ? true : ALLOWED_ORIGINS,
+      origin: function (origin, callback) {
+        // Requests without an Origin header
+        // (curl, Postman, server-to-server, etc.)
+        if (!origin) {
+          return callback(null, true);
+        }
+
+        if (ALLOW_ALL_ORIGINS || ALLOWED_ORIGINS.includes(origin)) {
+          return callback(null, true);
+        }
+
+        console.log("CORS blocked:", origin);
+        return callback(new Error("Not allowed by CORS"));
+      },
+
+      methods: ["GET", "POST", "OPTIONS"],
+
+      allowedHeaders: ["Content-Type", "Authorization", "X-Download-ID"],
+
       exposedHeaders: ["X-Download-ID", "Content-Disposition"],
+
+      credentials: false,
+
+      optionsSuccessStatus: 204,
     }),
   );
   app.use(express.json({ limit: "10kb" }));
