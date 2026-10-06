@@ -343,18 +343,46 @@ function startWorker() {
       .replace(/(?<=.)VEVO$/i, "")
       .trim();
 
+  // "Artist - Song (Official Video)" -> { artist: "Artist", song: "Song" }
+  const NOISE_RE =
+    /\s*[\(\[]\s*(?:official\s*)?(?:music\s*|lyric\s*|audio\s*|hd\s*|4k\s*)*(?:video|audio|lyrics?|visuali[sz]er|mv)\s*(?:hd|4k)?\s*[\)\]]\s*/gi;
+  function parseArtistTitle(raw) {
+    const m = String(raw || "")
+      .trim()
+      .match(/^(.{1,70}?)\s+[-\u2013\u2014]\s+(.+)$/);
+    if (!m) return null;
+    const artist = m[1].trim();
+    const song = m[2]
+      .replace(NOISE_RE, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    return artist && song ? { artist, song } : null;
+  }
+
   /** Build tag data from yt-dlp's info JSON (v) and/or oEmbed (o). Either may be empty. */
   function buildMeta(v, o) {
     v = v || {};
     o = o || {};
     const channel = v.channel || v.uploader || o.author_name || "";
-    const singer =
+    // Artist priority: 1) official artist fields  2) "Artist - Song" in the title  3) channel name
+    let singer =
       (Array.isArray(v.artists) ? v.artists.join(", ") : "") ||
       v.artist ||
       v.track_artist ||
       v.album_artist ||
-      cleanArtist(channel) ||
-      "Unknown Artist";
+      "";
+    let title = v.track || v.title || o.title || `audio-${Date.now()}`;
+
+    const parsed = v.track ? null : parseArtistTitle(v.title || o.title);
+    if (parsed) {
+      if (!singer) {
+        singer = parsed.artist;
+        title = parsed.song;
+      } else if (singer.toLowerCase().includes(parsed.artist.toLowerCase())) {
+        title = parsed.song; // title repeated the artist: keep only the song name
+      }
+    }
+    if (!singer) singer = cleanArtist(channel) || "Unknown Artist";
     const uploadDate = String(v.upload_date || "");
     const releaseYear = v.release_year
       ? String(v.release_year)
@@ -367,7 +395,7 @@ function startWorker() {
         .sort((a, b) => b.width - a.width)[0]?.url || "";
 
     return {
-      title: v.track || v.title || o.title || `audio-${Date.now()}`,
+      title,
       singer,
       channel: channel || "Unknown Channel",
       album: v.album || "",
@@ -689,7 +717,7 @@ function startWorker() {
           `[${process.pid}] ${id}: no yt-dlp info JSON, using oEmbed tags only`,
         );
       cacheMeta(videoId, meta);
-      downloadName = `${safeFileName(meta.title)} [${quality}kbps].mp3`;
+      downloadName = `${safeFileName(meta.singer && meta.singer !== "Unknown Artist" ? `${meta.singer} - ${meta.title}` : meta.title)} [${quality}kbps].mp3`;
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
       if (aborted) throw new Error("Client disconnected");
 
