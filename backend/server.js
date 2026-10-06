@@ -7,6 +7,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { spawn } = require("child_process");
 const { pipeline } = require("stream/promises");
+const { PassThrough } = require("stream");
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -28,8 +29,6 @@ const COVER_SIZE = Math.min(
 // "crop" = centre-crop to square (default), "blur" = full frame on a blurred background (nothing cut off)
 const COVER_MODE = process.env.COVER_MODE === "blur" ? "blur" : "crop";
 const META_TTL = 10 * 60 * 1000; // metadata cache
-const META_DEGRADED_TTL = 60 * 1000; // short cache when yt-dlp failed (retry soon)
-const META_TIMEOUT = Number(process.env.META_TIMEOUT_MS) || 90_000; // yt-dlp metadata timeout
 const JOB_TTL = 15 * 60 * 1000; // unclaimed job expiry
 const PROGRESS_TTL = 30 * 60 * 1000;
 const TEMP_DIR = path.join(__dirname, "temp");
@@ -319,67 +318,14 @@ function startWorker() {
       "--js-runtimes",
       `node:${NODE_PATH}`,
     ];
-    // Optional: newer yt-dlp may need this to fetch the JS challenge solver,
-    // e.g. YT_REMOTE_COMPONENTS="ejs:github"
-    if (process.env.YT_REMOTE_COMPONENTS)
-      args.push("--remote-components", process.env.YT_REMOTE_COMPONENTS);
     if (fs.existsSync(COOKIE_PATH)) args.push("--cookies", COOKIE_PATH);
     return args;
   };
 
-  // ---- metadata (parallel sources + cache + in-flight dedupe) -------------
+  // ---- metadata ---------------------------------------------------------------
+  // /api/song uses YouTube's fast oEmbed. The full tags come from the SAME yt-dlp
+  // process that downloads the audio (no second yt-dlp run = no CPU contention).
   const metaCache = new Map(); // videoId -> { meta, exp }
-  const metaInflight = new Map(); // videoId -> Promise
-
-  function runYtDlpJson(url, timeoutMs = META_TIMEOUT) {
-    return new Promise((resolve, reject) => {
-      const args = [
-        "--ignore-config",
-        "--dump-single-json",
-        "--skip-download",
-        "--ignore-no-formats-error", // metadata doesn't need formats
-        ...ytDlpBaseArgs(),
-        url,
-      ];
-      const child = spawn(YT_DLP_PATH, args, {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let out = "";
-      let err = "";
-      const timer = setTimeout(() => {
-        child.kill("SIGKILL");
-        reject(new Error("yt-dlp metadata timed out"));
-      }, timeoutMs);
-      child.stdout.on("data", (d) => (out += d));
-      child.stderr.on("data", (d) => (err += d));
-      child.on("error", (e) => {
-        clearTimeout(timer);
-        reject(e);
-      });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        if (code !== 0)
-          return reject(
-            new Error(err.trim() || `yt-dlp exited with code ${code}`),
-          );
-        try {
-          resolve(JSON.parse(out));
-        } catch {
-          reject(new Error("Could not parse yt-dlp JSON"));
-        }
-      });
-    });
-  }
-
-  // Try once, then retry once on failure
-  async function runYtDlpJsonRetry(url) {
-    try {
-      return await runYtDlpJson(url);
-    } catch (e) {
-      console.error("yt-dlp metadata retry:", e.message);
-      return runYtDlpJson(url);
-    }
-  }
 
   async function fetchOEmbed(url) {
     const res = await fetch(
@@ -390,47 +336,29 @@ function startWorker() {
     return res.json();
   }
 
-  async function loadMeta(videoId, url) {
-    const [oe, yt] = await Promise.allSettled([
-      fetchOEmbed(url),
-      runYtDlpJsonRetry(url),
-    ]);
-    const o = oe.status === "fulfilled" ? oe.value : {};
-    const v = yt.status === "fulfilled" ? yt.value : {};
-    if (yt.status === "rejected")
-      console.error("yt-dlp metadata error:", yt.reason.message);
-    if (oe.status === "rejected")
-      console.error("oEmbed error:", oe.reason.message);
-    if (!o.title && !v.title)
-      throw new Error("Could not retrieve video information");
+  // "Artist - Topic" / "ArtistVEVO" -> "Artist"
+  const cleanArtist = (n) =>
+    String(n || "")
+      .replace(/\s*-\s*Topic$/i, "")
+      .replace(/(?<=.)VEVO$/i, "")
+      .trim();
 
-    const rawTitle = v.title || o.title || `audio-${Date.now()}`;
-    let cleanTitle = rawTitle;
-
-    let singer =
+  /** Build tag data from yt-dlp's info JSON (v) and/or oEmbed (o). Either may be empty. */
+  function buildMeta(v, o) {
+    v = v || {};
+    o = o || {};
+    const channel = v.channel || v.uploader || o.author_name || "";
+    const singer =
       (Array.isArray(v.artists) ? v.artists.join(", ") : "") ||
       v.artist ||
       v.track_artist ||
       v.album_artist ||
-      "";
-
-    // Fallback when yt-dlp gave no artist: "Artist - Title" pattern, else channel name
-    if (!singer) {
-      const m = rawTitle.match(/^(.+?)\s+[-–—]\s+(.+)$/);
-      if (m) {
-        singer = m[1].trim();
-        cleanTitle = m[2].trim();
-      } else {
-        singer = String(v.channel || v.uploader || o.author_name || "")
-          .replace(/\s*-\s*Topic$/i, "")
-          .trim();
-      }
-    }
-
-    const uploadDate = v.upload_date || "";
+      cleanArtist(channel) ||
+      "Unknown Artist";
+    const uploadDate = String(v.upload_date || "");
     const releaseYear = v.release_year
       ? String(v.release_year)
-      : uploadDate.slice(0, 4);
+      : String(v.release_date || uploadDate).slice(0, 4);
 
     // YouTube Music / "Topic" uploads expose real square album art
     const squareCover =
@@ -439,37 +367,21 @@ function startWorker() {
         .sort((a, b) => b.width - a.width)[0]?.url || "";
 
     return {
-      squareCover,
-      title: cleanTitle,
-      fullTitle: rawTitle, // used for the download filename
-      singer: singer || "Unknown Artist",
-      channel: v.channel || v.uploader || o.author_name || "Unknown Channel",
+      title: v.track || v.title || o.title || `audio-${Date.now()}`,
+      singer,
+      channel: channel || "Unknown Channel",
       album: v.album || "",
       duration: Number(v.duration) || 0,
       cover: v.thumbnail || o.thumbnail_url || "",
+      squareCover,
       uploadDate,
       releaseYear,
-      degraded: yt.status === "rejected", // yt-dlp failed: only oEmbed data
     };
   }
 
-  function getMeta(videoId, url) {
-    const hit = metaCache.get(videoId);
-    if (hit && hit.exp > Date.now()) return Promise.resolve(hit.meta);
-    if (metaInflight.has(videoId)) return metaInflight.get(videoId);
-
-    const p = loadMeta(videoId, url)
-      .then((meta) => {
-        // degraded results are cached briefly so we retry soon without hammering yt-dlp
-        const ttl = meta.degraded ? META_DEGRADED_TTL : META_TTL;
-        metaCache.set(videoId, { meta, exp: Date.now() + ttl });
-        if (metaCache.size > 500)
-          metaCache.delete(metaCache.keys().next().value);
-        return meta;
-      })
-      .finally(() => metaInflight.delete(videoId));
-    metaInflight.set(videoId, p);
-    return p;
+  function cacheMeta(videoId, meta) {
+    metaCache.set(videoId, { meta, exp: Date.now() + META_TTL });
+    if (metaCache.size > 500) metaCache.delete(metaCache.keys().next().value);
   }
 
   // ---- cover art -----------------------------------------------------------
@@ -530,8 +442,10 @@ function startWorker() {
     return false;
   }
 
-  // ---- audio stream ----------------------------------------------------------
-  function startAudioProcess(url) {
+  // ---- audio stream + metadata in ONE yt-dlp run -------------------------------
+  const INFO_TIMEOUT = Number(process.env.INFO_TIMEOUT_MS) || 120_000;
+
+  function startAudioProcess(url, infoPath) {
     const args = [
       ...ytDlpBaseArgs(),
       "--no-check-certificates",
@@ -540,22 +454,66 @@ function startWorker() {
       "--concurrent-fragments",
       "4",
       "--no-part",
+      // write the full info JSON to a file right before the download starts
+      "--print-to-file",
+      "before_dl:%()j",
+      infoPath.replace(/%/g, "%%"),
       "--format",
       "bestaudio/best",
       "--output",
       "-",
       url,
     ];
-    const child = spawn(YT_DLP_PATH, args, {
+    const proc = spawn(YT_DLP_PATH, args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
-    child.on("error", (e) =>
-      console.error("Failed to start yt-dlp:", e.message),
-    );
-    child.stderr.on("data", (d) =>
-      console.error("yt-dlp:", d.toString().trim()),
-    );
-    return child;
+    proc.ytErr = "";
+    proc.on("error", (e) => {
+      proc.ytErr += e.message;
+      console.error("Failed to start yt-dlp:", e.message);
+    });
+    proc.stderr.on("data", (d) => {
+      const t = d.toString().trim();
+      proc.ytErr = (proc.ytErr + "\n" + t).slice(-1500);
+      if (t) console.error("yt-dlp:", t);
+    });
+
+    // Buffer audio while we wait for the info JSON (so yt-dlp can keep downloading).
+    const audio = new PassThrough({ highWaterMark: 4 * 1024 * 1024 });
+    proc.stdout.pipe(audio);
+    proc.stdout.on("error", () => {});
+
+    const started = Date.now();
+    let firstByteAt = 0;
+    proc.stdout.once("data", () => (firstByteAt = Date.now()));
+
+    const readInfo = () => {
+      try {
+        const line = fs.readFileSync(infoPath, "utf8").split("\n")[0].trim();
+        return line ? JSON.parse(line) : null;
+      } catch {
+        return null; // not written yet / partially written
+      }
+    };
+
+    const infoReady = new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        clearInterval(timer);
+        resolve(v);
+      };
+      const timer = setInterval(() => {
+        const info = readInfo();
+        if (info) return finish(info);
+        if (firstByteAt && Date.now() - firstByteAt > 1500) return finish(null); // audio flowing, no info file
+        if (Date.now() - started > INFO_TIMEOUT) finish(null);
+      }, 100);
+      proc.on("close", () => finish(readInfo()));
+    });
+
+    return { proc, audio, infoReady };
   }
 
   // ---- express app -------------------------------------------------------------
@@ -599,7 +557,6 @@ function startWorker() {
       mp3Encoder: enc.ok && /libmp3lame/.test(enc.out),
       cookiesFile: fs.existsSync(COOKIE_PATH),
       node: process.version,
-      metaTimeoutMs: META_TIMEOUT,
     };
     console.log(`[${process.pid}] TOOL CHECK:`, JSON.stringify(toolStatus));
     if (!toolStatus.mp3Encoder)
@@ -626,30 +583,13 @@ function startWorker() {
     if (!parsed)
       return res.status(400).json({ error: "A valid YouTube URL is required" });
     try {
-      // Always start the full lookup in the background so it is cached by the time the user clicks Download.
-      const full = getMeta(parsed.id, parsed.url);
-      full.catch(() => {});
-
-      const cached = metaCache.get(parsed.id);
+      const hit = metaCache.get(parsed.id);
       let m;
-      if (cached && cached.exp > Date.now()) {
-        m = cached.meta;
+      if (hit && hit.exp > Date.now()) {
+        m = hit.meta;
       } else {
-        try {
-          const o = await fetchOEmbed(parsed.url); // fast path for the preview card
-          m = {
-            title: o.title || "",
-            singer: o.author_name || "Unknown Artist",
-            channel: o.author_name || "Unknown Channel",
-            album: "",
-            duration: 0,
-            cover: o.thumbnail_url || "",
-            releaseYear: "",
-          };
-          if (!m.title) m = await full;
-        } catch {
-          m = await full; // oEmbed failed: wait for the full lookup
-        }
+        const o = await fetchOEmbed(parsed.url);
+        m = buildMeta(null, o);
       }
       res.json({
         song_name: m.title,
@@ -676,7 +616,6 @@ function startWorker() {
       return res.status(400).json({ error: "Invalid quality" });
     }
     try {
-      getMeta(parsed.id, parsed.url).catch(() => {}); // warm cache (usually already done)
       const downloadId = crypto.randomUUID();
       await store.set(
         `${downloadId}:job`,
@@ -714,6 +653,7 @@ function startWorker() {
     let downloadName = "audio.mp3";
 
     let aborted = false;
+    let infoFile = null;
     let ytProc = null;
     let command = null;
     res.on("close", () => {
@@ -733,18 +673,28 @@ function startWorker() {
       acquired = true;
       if (aborted) throw new Error("Client disconnected");
 
-      // Resolve metadata FIRST (usually cached from /api/song or /api/download),
-      // so the metadata yt-dlp and the audio yt-dlp don't compete for CPU.
-      const meta = await getMeta(videoId, url);
-      if (aborted) throw new Error("Client disconnected");
+      // Start downloading audio while cover art is prepared in parallel.
+      const infoPath = path.join(TEMP_DIR, `${id}.info.json`);
+      infoFile = infoPath;
+      const oembedP = fetchOEmbed(url).catch(() => null);
+      const started = startAudioProcess(url, infoPath);
+      ytProc = started.proc;
+      const audioStream = started.audio;
 
-      ytProc = startAudioProcess(url);
-      downloadName = `${safeFileName(meta.fullTitle || meta.title)} [${quality}kbps].mp3`;
+      const info = await started.infoReady; // arrives just before audio starts flowing
+      if (aborted) throw new Error("Client disconnected");
+      const meta = buildMeta(info, await oembedP);
+      if (!info)
+        console.warn(
+          `[${process.pid}] ${id}: no yt-dlp info JSON, using oEmbed tags only`,
+        );
+      cacheMeta(videoId, meta);
+      downloadName = `${safeFileName(meta.title)} [${quality}kbps].mp3`;
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
       if (aborted) throw new Error("Client disconnected");
 
       console.log(
-        `[${process.pid}] ${id}: cover=${hasCover ? "yes" : "NO"} title="${meta.title}" artist="${meta.singer}"${meta.degraded ? " (degraded metadata)" : ""}`,
+        `[${process.pid}] ${id}: cover=${hasCover ? "yes" : "NO"} title="${meta.title}"`,
       );
 
       await new Promise((resolve, reject) => {
@@ -787,7 +737,7 @@ function startWorker() {
           "-metadata",
           `artist=${clean(meta.singer)}`,
           "-metadata",
-          `album=${clean(meta.album) || "YouTube Downloads"}`,
+          `album=${clean(meta.album) || clean(meta.title)}`,
           "-metadata",
           `album_artist=${clean(meta.singer)}`,
           "-metadata",
@@ -813,9 +763,8 @@ function startWorker() {
         });
         command = ff;
 
-        ytProc.stdout.pipe(ff.stdin);
+        audioStream.pipe(ff.stdin);
         ff.stdin.on("error", () => {}); // ffmpeg may close stdin early
-        ytProc.stdout.on("error", () => {});
 
         let errTail = "";
         ff.stderr.on("data", (d) => (errTail = (errTail + d).slice(-2000)));
@@ -865,14 +814,19 @@ function startWorker() {
       );
       await pipeline(fs.createReadStream(outPath), res);
     } catch (e) {
-      if (!aborted) console.error("Streaming error:", e.message);
+      if (!aborted)
+        console.error(
+          "Streaming error:",
+          e.message,
+          ytProc && ytProc.ytErr ? `| yt-dlp: ${ytProc.ytErr}` : "",
+        );
       setProgress(id, -1);
       if (!res.headersSent) res.status(500).send("Audio compilation failed.");
       else res.destroy();
     } finally {
       if (acquired) limiter.release();
       if (ytProc) ytProc.kill("SIGKILL");
-      await rm(outPath, coverPath);
+      await rm(outPath, coverPath, infoFile);
       setTimeout(() => lastProgress.delete(id), 60_000).unref();
     }
   });
