@@ -1,857 +1,1146 @@
-import { useEffect, useState } from "react";
-import "./App.css";
+"use strict";
 
-function App() {
-  const [url, setUrl] = useState("");
-  const [quality, setQuality] = useState("128");
+const cluster = require("cluster");
+const os = require("os");
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
+const { spawn } = require("child_process");
+const { pipeline } = require("stream/promises");
+const { PassThrough } = require("stream");
 
-  const [songData, setSongData] = useState({
-    title: "",
-    channel: "",
-    thumbnail: "",
-  });
+// ---------------------------------------------------------------------------
+// CONFIG
+// ---------------------------------------------------------------------------
+const PORT = Number(process.env.PORT) || 5001;
+const isProduction = process.env.NODE_ENV === "production";
+const CPU_COUNT = os.availableParallelism
+  ? os.availableParallelism()
+  : os.cpus().length;
+const WORKERS =
+  Number(process.env.WORKERS) || (isProduction ? 1 : Math.min(CPU_COUNT, 4));
+const MAX_JOBS = Number(process.env.MAX_JOBS) || 2; // concurrent conversions PER worker
+const MAX_QUEUE = Number(process.env.MAX_QUEUE) || 20; // waiting jobs PER worker
+// Apple recommends square art between 1400 and 3000 px
+const COVER_SIZE = Math.min(
+  Math.max(Number(process.env.COVER_SIZE) || 1400, 1400),
+  3000,
+);
+// "crop" = centre-crop to square (default), "blur" = full frame on a blurred background (nothing cut off)
+const COVER_MODE = process.env.COVER_MODE === "blur" ? "blur" : "crop";
+const META_TTL = 10 * 60 * 1000; // metadata cache
+const JOB_TTL = 15 * 60 * 1000; // unclaimed job expiry
+const PROGRESS_TTL = 30 * 60 * 1000;
+const TEMP_DIR = path.join(__dirname, "temp");
+const COOKIE_PATH = path.join(__dirname, "youtube-cookies.txt");
+const NODE_PATH = process.execPath;
 
-  const [error, setError] = useState("");
-  const [downloadId, setDownloadId] = useState(null);
-  const [progress, setProgress] = useState(0);
-
-  const [isLoadingSong, setIsLoadingSong] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [isPreparing, setIsPreparing] = useState(false);
-  const [readyToSave, setReadyToSave] = useState(false);
-
-  // const API_URL = "http://127.0.0.1:5001";
-  const API_URL = "https://youtube-to-mp3-rhww.onrender.com";
-  // ===============================================
-  // --------------------------------------------------
-  // LIVE DOWNLOAD PROGRESS
-  // --------------------------------------------------
-
-  useEffect(() => {
-    if (!downloadId) return;
-
-    const eventSource = new EventSource(
-      `${API_URL}/api/progress/${downloadId}`,
-    );
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const currentProgress = Number(data.progress) || 0;
-
-        setProgress(currentProgress);
-
-        if (currentProgress > 0) {
-          setIsPreparing(false);
-        }
-
-        if (currentProgress >= 100) {
-          eventSource.close();
-        }
-      } catch (err) {
-        console.error("Progress error:", err);
-      }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, [downloadId]);
-
-  // --------------------------------------------------
-  // YOUTUBE URL VALIDATION
-  // --------------------------------------------------
-
-  const isValidYouTubeUrl = (value) => {
+// Resolve binaries: env override -> bundled locations -> system PATH
+function resolveBinary(envName, candidates, fallback) {
+  if (process.env[envName]) return process.env[envName];
+  for (const c of candidates) {
     try {
-      const parsedUrl = new URL(value);
+      if (c && fs.existsSync(c)) return c;
+    } catch {}
+  }
+  return fallback;
+}
+let ffmpegStatic = null;
+try {
+  ffmpegStatic = require("ffmpeg-static"); // optional: npm i ffmpeg-static
+} catch {}
 
-      return [
-        "youtube.com",
-        "www.youtube.com",
-        "m.youtube.com",
-        "youtu.be",
-        "www.youtu.be",
-      ].includes(parsedUrl.hostname);
-    } catch {
-      return false;
+const FFMPEG_PATH = resolveBinary(
+  "FFMPEG_PATH",
+  [path.join(__dirname, "bin", "ffmpeg"), ffmpegStatic],
+  "ffmpeg",
+);
+const YT_DLP_PATH = resolveBinary(
+  "YT_DLP_PATH",
+  [
+    path.join(__dirname, ".venv", "bin", "yt-dlp"),
+    path.join(__dirname, "bin", "yt-dlp"),
+  ],
+  "yt-dlp",
+);
+
+// CORS_ORIGINS="*" allows every origin; otherwise a comma-separated list.
+const ALLOW_ALL_ORIGINS = process.env.CORS_ORIGINS === "*";
+const ALLOWED_ORIGINS = (
+  process.env.CORS_ORIGINS ||
+  "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"
+)
+  .split(",")
+  .map((s) => s.trim().replace(/\/$/, "")) // tolerate a trailing slash
+  .filter(Boolean);
+
+// ---------------------------------------------------------------------------
+// SHARED STATE STORE (in-memory Map with TTL)
+// In cluster mode the primary process owns the Map and workers talk to it
+// over IPC, so any worker can serve any request for a given download id.
+// ---------------------------------------------------------------------------
+class MemStore {
+  constructor() {
+    this.map = new Map();
+  }
+  set(key, value, ttl) {
+    this.map.set(key, { value, exp: Date.now() + ttl });
+  }
+  get(key) {
+    const e = this.map.get(key);
+    if (!e) return null;
+    if (e.exp < Date.now()) {
+      this.map.delete(key);
+      return null;
     }
-  };
-
-  // --------------------------------------------------
-  // GET SONG INFORMATION
-  // --------------------------------------------------
-
-  const getSongData = async (videoUrl) => {
-    const response = await fetch(`${API_URL}/api/song`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        url: videoUrl,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || "Unable to get song information.");
-    }
-
-    return data;
-  };
-
-  // --------------------------------------------------
-  // FIND SONG
-  // --------------------------------------------------
-
-  const handleConvert = async () => {
-    setError("");
-
-    const cleanUrl = url.trim();
-
-    if (!cleanUrl) {
-      setError("Paste a YouTube link to continue.");
-      return;
-    }
-
-    if (!isValidYouTubeUrl(cleanUrl)) {
-      setError("That doesn't look like a valid YouTube link.");
-      return;
-    }
-
-    try {
-      setIsLoadingSong(true);
-      setReadyToSave(false);
-      setProgress(0);
-
-      const data = await getSongData(cleanUrl);
-
-      setSongData({
-        title: data.song_name || "",
-        channel: data.singer || "",
-        thumbnail: data.cover || "",
-      });
-    } catch (err) {
-      console.error("Song error:", err);
-
-      setSongData({
-        title: "",
-        channel: "",
-        thumbnail: "",
-      });
-
-      setError(err.message || "Unable to fetch song information.");
-    } finally {
-      setIsLoadingSong(false);
-    }
-  };
-
-  // --------------------------------------------------
-  // START DOWNLOAD JOB
-  // --------------------------------------------------
-
-  const requestDownload = async (videoUrl, selectedQuality) => {
-    const response = await fetch(`${API_URL}/api/download`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        url: videoUrl,
-        quality: selectedQuality,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok || !data.downloadId) {
-      throw new Error(data.error || "Unable to start download.");
-    }
-
-    setDownloadId(data.downloadId);
-
-    return data.downloadId;
-  };
-
-  // --------------------------------------------------
-  // SANITIZE FILE NAME
-  // --------------------------------------------------
-
-  const sanitizeFilename = (filename) => {
-    return filename
-      .replace(/[\/\\:*?"<>|]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 180);
-  };
-
-  // --------------------------------------------------
-  // DOWNLOAD MP3
-  // --------------------------------------------------
-
-  const startDownload = async () => {
-    if (!url.trim()) {
-      setError("Paste a YouTube link first.");
-      return;
-    }
-
-    setError("");
-    setIsDownloading(true);
-    setIsPreparing(true);
-    setReadyToSave(false);
-    setProgress(0);
-
-    try {
-      // Start backend download job
-      const targetId = await requestDownload(url.trim(), quality);
-
-      // Give SSE a little time to connect
-
-      // If progress has not started yet, keep preparing state
-      setIsPreparing(false);
-
-      // Get actual MP3 file
-      const response = await fetch(
-        `${API_URL}/api/download-file?id=${encodeURIComponent(targetId)}`,
-      );
-
-      if (!response.ok) {
-        let message = "MP3 conversion failed.";
-
-        try {
-          message = await response.text();
-        } catch {}
-
-        throw new Error(message || "MP3 conversion failed.");
-      }
-
-      const blob = await response.blob();
-
-      if (!blob || blob.size === 0) {
-        throw new Error("The generated MP3 file is empty.");
-      }
-
-      setProgress(100);
-
-      // Create browser download
-      const downloadUrl = URL.createObjectURL(blob);
-
-      const anchor = document.createElement("a");
-
-      anchor.href = downloadUrl;
-
-      anchor.download = `${sanitizeFilename(
-        songData.title || "YouTube Audio",
-      )}-${quality}kbps.mp3`;
-
-      document.body.appendChild(anchor);
-
-      anchor.click();
-
-      anchor.remove();
-
-      setTimeout(() => {
-        URL.revokeObjectURL(downloadUrl);
-      }, 1000);
-
-      setReadyToSave(true);
-    } catch (err) {
-      console.error("Download error:", err);
-
-      setError(err.message || "Something went wrong while downloading.");
-    } finally {
-      setIsPreparing(false);
-      setIsDownloading(false);
-    }
-  };
-
-  // --------------------------------------------------
-  // RESET
-  // --------------------------------------------------
-
-  const resetSong = () => {
-    setUrl("");
-
-    setSongData({
-      title: "",
-      channel: "",
-      thumbnail: "",
-    });
-
-    setError("");
-    setDownloadId(null);
-    setProgress(0);
-    setReadyToSave(false);
-    setIsDownloading(false);
-    setIsPreparing(false);
-  };
-
-  // --------------------------------------------------
-  // UI
-  // --------------------------------------------------
-
-  return (
-    <div className="min-h-screen overflow-hidden bg-[#f8f9fc] text-slate-900">
-      {/* BACKGROUND */}
-      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="absolute -left-32 -top-32 h-[500px] w-[500px] rounded-full bg-red-300/15 blur-[120px]" />
-
-        <div className="absolute -right-40 top-20 h-[500px] w-[500px] rounded-full bg-pink-300/15 blur-[130px]" />
-
-        <div className="absolute bottom-[-200px] left-[30%] h-[500px] w-[500px] rounded-full bg-purple-300/10 blur-[140px]" />
-
-        <div className="absolute inset-0 opacity-[0.025] [background-image:linear-gradient(#000_1px,transparent_1px),linear-gradient(90deg,#000_1px,transparent_1px)] [background-size:50px_50px]" />
-      </div>
-
-      {/* NAVBAR */}
-      <nav className="sticky top-0 z-50 border-b border-white/70 bg-white/50 backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <div className="flex items-center gap-3">
-            <div className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-red-500 via-pink-500 to-purple-500 text-white shadow-lg shadow-red-200 transition-all duration-300 hover:scale-105">
-              <span className="absolute inset-0 bg-white/20" />
-
-              <svg
-                className="relative"
-                width="19"
-                height="19"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </div>
-
-            <div>
-              <div className="text-lg font-bold tracking-tight">
-                YouTube<span className="text-red-500">MP3</span>
-              </div>
-
-              <div className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-                Music Converter
-              </div>
-            </div>
-          </div>
-
-          <div className="hidden items-center gap-2 rounded-full border border-white bg-white/60 px-4 py-2 text-xs font-semibold text-slate-500 shadow-sm backdrop-blur-xl sm:flex">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-            </span>
-            Online
-          </div>
-        </div>
-      </nav>
-
-      {/* MAIN */}
-      <main className="mx-auto max-w-5xl px-5 pb-24">
-        {/* HERO */}
-        <section className="relative pb-4 pt-20 text-center sm:pt-28">
-          <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-white bg-white/55 px-4 py-2 text-xs font-semibold text-slate-500 shadow-[0_10px_35px_rgba(30,30,60,0.06)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:bg-white/75">
-            <span className="text-red-500">✦</span>
-            Your music, your way
-            <span className="text-slate-300">•</span>
-            MP3
-          </div>
-
-          <h1 className="mx-auto max-w-4xl text-5xl font-black leading-[1.02] tracking-[-0.04em] text-slate-900 sm:text-7xl">
-            Turn your favorite
-            <br />
-            <span className="bg-gradient-to-r from-red-500 via-pink-500 to-purple-500 bg-clip-text text-transparent">
-              videos into music.
-            </span>
-          </h1>
-
-          <p className="mx-auto mt-7 max-w-xl text-sm leading-7 text-slate-500 sm:text-base">
-            Paste a YouTube link, choose your quality, and create your MP3 with
-            artwork in seconds.
-          </p>
-        </section>
-
-        {/* URL INPUT */}
-        <section className="mx-auto mt-10 max-w-3xl">
-          <div className="group rounded-[30px] border border-white/90 bg-white/55 p-3 shadow-[0_25px_80px_rgba(30,30,60,0.08)] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-1 hover:bg-white/65 hover:shadow-[0_35px_100px_rgba(30,30,60,0.11)]">
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <div className="relative flex-1">
-                <div className="pointer-events-none absolute left-5 top-1/2 z-10 -translate-y-1/2 text-slate-400 transition-colors duration-300 group-focus-within:text-red-400">
-                  <svg
-                    width="19"
-                    height="19"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                  </svg>
-                </div>
-
-                <input
-                  type="url"
-                  value={url}
-                  onChange={(e) => {
-                    setUrl(e.target.value);
-                    setError("");
-
-                    if (songData.title) {
-                      setSongData({
-                        title: "",
-                        channel: "",
-                        thumbnail: "",
-                      });
-
-                      setReadyToSave(false);
-                      setProgress(0);
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      handleConvert();
-                    }
-                  }}
-                  placeholder="Paste a YouTube link..."
-                  className="h-16 w-full rounded-[22px] border border-white bg-white/60 pl-14 pr-5 text-sm font-medium text-slate-800 outline-none backdrop-blur-xl transition-all duration-300 placeholder:text-slate-400 focus:border-red-200 focus:bg-white/90 focus:ring-4 focus:ring-red-100/60 focus:shadow-[0_10px_40px_rgba(239,68,68,0.08)]"
-                />
-              </div>
-
-              <button
-                onClick={handleConvert}
-                disabled={isLoadingSong}
-                className="group h-16 rounded-[22px] bg-gradient-to-r from-red-500 via-pink-500 to-red-500 bg-[length:200%_100%] px-8 font-bold text-white shadow-lg shadow-red-200/70 transition-all duration-500 hover:-translate-y-1 hover:bg-[position:100%_0] hover:shadow-xl hover:shadow-red-200 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isLoadingSong ? (
-                  <span className="flex items-center gap-2">
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                    Finding
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    Find Song
-                    <span className="transition-transform duration-300 group-hover:translate-x-1">
-                      →
-                    </span>
-                  </span>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {error && (
-            <div className="mt-4 rounded-2xl border border-red-100 bg-red-50/70 px-4 py-3 text-center text-sm font-medium text-red-600 shadow-sm backdrop-blur-xl">
-              {error}
-            </div>
-          )}
-        </section>
-
-        {/* SONG CARD */}
-        {songData.title && (
-          <section className="mx-auto mt-10 max-w-3xl">
-            <div className="relative overflow-hidden rounded-[32px] border border-white/90 bg-white/55 p-5 shadow-[0_30px_100px_rgba(30,30,60,0.09)] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-1 hover:bg-white/65">
-              <div className="pointer-events-none absolute -right-20 -top-20 h-60 w-60 rounded-full bg-red-300/10 blur-3xl" />
-
-              {/* SONG INFO */}
-              <div className="relative flex flex-col gap-6 sm:flex-row">
-                <div className="group relative mx-auto h-52 w-52 shrink-0 overflow-hidden rounded-[24px] bg-slate-100 shadow-[0_20px_50px_rgba(30,30,60,0.14)] sm:mx-0">
-                  {songData.thumbnail ? (
-                    <img
-                      src={songData.thumbnail}
-                      alt={songData.title}
-                      className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-110"
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-red-100 via-pink-100 to-purple-100">
-                      <span className="text-6xl text-red-400">♫</span>
-                    </div>
-                  )}
-
-                  <div className="absolute left-3 top-3 rounded-full border border-white/60 bg-white/65 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-600 shadow-sm backdrop-blur-xl">
-                    YouTube
-                  </div>
-
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-all duration-300 group-hover:bg-black/10">
-                    <div className="flex h-14 w-14 scale-75 items-center justify-center rounded-full bg-white/80 text-red-500 opacity-0 shadow-xl backdrop-blur-xl transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
-                      ▶
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex min-w-0 flex-1 flex-col justify-center">
-                  <div className="mb-3 flex items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-red-500" />
-
-                    <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-500">
-                      Ready to convert
-                    </span>
-                  </div>
-
-                  <h2 className="line-clamp-3 text-2xl font-black leading-tight tracking-tight text-slate-900">
-                    {songData.title}
-                  </h2>
-
-                  <p className="mt-3 text-sm font-medium text-slate-500">
-                    {songData.channel || "Unknown Channel"}
-                  </p>
-
-                  <div className="mt-6 flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white bg-white/70 text-red-500 shadow-sm backdrop-blur-xl">
-                      ♪
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-semibold text-slate-600">
-                        MP3 Audio
-                      </p>
-
-                      <p className="text-[10px] text-slate-400">
-                        Artwork included
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* QUALITY */}
-              <div className="relative mt-8">
-                <div className="mb-4 flex items-end justify-between">
-                  <div>
-                    <p className="text-sm font-bold text-slate-800">
-                      Choose your quality
-                    </p>
-
-                    <p className="mt-1 text-xs text-slate-400">
-                      Select the bitrate for your MP3
-                    </p>
-                  </div>
-
-                  <span className="rounded-full border border-white bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    {quality} kbps
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    {
-                      value: "128",
-                      title: "128 kbps",
-                      subtitle: "Smaller file",
-                    },
-                    {
-                      value: "320",
-                      title: "320 kbps",
-                      subtitle: "Maximum quality",
-                    },
-                  ].map((item) => {
-                    const active = quality === item.value;
-
-                    return (
-                      <button
-                        key={item.value}
-                        onClick={() => setQuality(item.value)}
-                        disabled={isDownloading}
-                        className={`
-                          group
-                          relative
-                          overflow-hidden
-                          rounded-[22px]
-                          border
-                          p-4
-                          text-left
-                          backdrop-blur-xl
-                          transition-all
-                          duration-300
-                          hover:-translate-y-1
-                          disabled:cursor-not-allowed
-                          ${
-                            active
-                              ? "border-red-300 bg-red-50/80 shadow-lg shadow-red-100/70"
-                              : "border-white/80 bg-white/50 hover:bg-white/75 hover:shadow-lg"
-                          }
-                        `}
-                      >
-                        {active && (
-                          <div className="absolute right-0 top-0 h-16 w-16 rounded-full bg-red-300/20 blur-2xl" />
-                        )}
-
-                        <div className="relative flex items-center justify-between">
-                          <div>
-                            <p
-                              className={
-                                active
-                                  ? "font-bold text-red-600"
-                                  : "font-bold text-slate-700"
-                              }
-                            >
-                              {item.title}
-                            </p>
-
-                            <p className="mt-1 text-[11px] text-slate-400">
-                              {item.subtitle}
-                            </p>
-                          </div>
-
-                          <div
-                            className={`
-                              flex
-                              h-6
-                              w-6
-                              items-center
-                              justify-center
-                              rounded-full
-                              border
-                              transition-all
-                              duration-300
-                              ${
-                                active
-                                  ? "scale-110 border-red-500 bg-red-500 shadow-md shadow-red-200"
-                                  : "border-slate-300 bg-white/50 group-hover:border-red-300"
-                              }
-                            `}
-                          >
-                            {active && (
-                              <span className="h-2 w-2 rounded-full bg-white" />
-                            )}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* DOWNLOAD / PROGRESS */}
-              {isDownloading && (
-                <div className="mt-6 overflow-hidden rounded-[24px] border border-white/90 bg-white/55 p-6 shadow-inner backdrop-blur-xl">
-                  {/* PREPARING */}
-                  {isPreparing ? (
-                    <div className="text-center">
-                      {/* Main animated loader */}
-                      <div className="relative mx-auto mb-5 flex h-20 w-20 items-center justify-center">
-                        {/* Outer pulse */}
-                        <div className="absolute inset-0 animate-ping rounded-full bg-red-200/30" />
-
-                        {/* Spinning ring */}
-                        <div className="absolute inset-2 animate-[spin_2s_linear_infinite] rounded-full border-2 border-transparent border-t-red-500 border-r-pink-400" />
-
-                        {/* Center */}
-                        <div className="relative flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-red-500 via-pink-500 to-purple-500 text-white shadow-lg shadow-red-200">
-                          <span className="animate-pulse text-xl">♫</span>
-                        </div>
-                      </div>
-
-                      <p className="text-base font-bold text-slate-800">
-                        Preparing your download
-                      </p>
-
-                      <p className="mt-1 text-xs text-slate-400">
-                        Connecting to the audio converter...
-                      </p>
-
-                      {/* Animated dots */}
-                      <div className="mt-4 flex justify-center gap-1.5">
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-red-500 [animation-delay:-0.3s]" />
-
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-pink-500 [animation-delay:-0.15s]" />
-
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-purple-500" />
-                      </div>
-
-                      {/* Moving loading bar */}
-                      <div className="mx-auto mt-5 h-1.5 max-w-xs overflow-hidden rounded-full bg-slate-200/70">
-                        <div className="h-full w-1/3 animate-[loading_1.5s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-red-500 via-pink-500 to-purple-500" />
-                      </div>
-                    </div>
-                  ) : (
-                    /* REAL PROGRESS */
-                    <div>
-                      <div className="mb-4 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-50 text-red-500">
-                            <span className="animate-pulse">♪</span>
-                          </div>
-
-                          <div>
-                            <p className="text-sm font-bold text-slate-700">
-                              Creating your MP3
-                            </p>
-
-                            <p className="text-[10px] text-slate-400">
-                              Converting audio...
-                            </p>
-                          </div>
-                        </div>
-
-                        <span className="text-lg font-black text-red-500">
-                          {Math.round(progress)}%
-                        </span>
-                      </div>
-
-                      <div className="h-3 overflow-hidden rounded-full bg-slate-200/70">
-                        <div
-                          className="relative h-full rounded-full bg-gradient-to-r from-red-500 via-pink-500 to-purple-500 shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-all duration-500"
-                          style={{
-                            width: `${Math.min(progress, 100)}%`,
-                          }}
-                        >
-                          <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/40 to-transparent" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* DOWNLOAD BUTTON */}
-              {!isDownloading && !readyToSave && (
-                <button
-                  onClick={startDownload}
-                  className="group relative mt-6 h-16 w-full overflow-hidden rounded-[22px] bg-gradient-to-r from-red-500 via-pink-500 to-purple-500 bg-[length:200%_100%] font-bold text-white shadow-xl shadow-red-200/60 transition-all duration-500 hover:-translate-y-1 hover:bg-[position:100%_0] hover:shadow-2xl hover:shadow-pink-200/60 active:translate-y-0"
-                >
-                  <span className="absolute inset-y-0 -left-20 w-16 rotate-12 bg-white/20 blur-sm transition-all duration-700 group-hover:left-[110%]" />
-
-                  <span className="relative flex items-center justify-center gap-3">
-                    <svg
-                      width="20"
-                      height="20"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M12 3v12" />
-                      <path d="m7 10 5 5 5-5" />
-                      <path d="M5 21h14" />
-                    </svg>
-                    Download MP3
-                    <span className="transition-transform duration-300 group-hover:translate-y-1">
-                      ↓
-                    </span>
-                  </span>
-                </button>
-              )}
-
-              {/* SUCCESS */}
-              {readyToSave && !isDownloading && (
-                <div className="mt-6">
-                  <div className="rounded-[22px] border border-emerald-100 bg-emerald-50/70 p-5 text-center backdrop-blur-xl">
-                    <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-xl text-emerald-600 shadow-sm">
-                      ✓
-                    </div>
-
-                    <p className="font-bold text-emerald-700">
-                      Your MP3 is ready
-                    </p>
-
-                    <p className="mt-1 text-xs text-emerald-600/70">
-                      The download has started automatically.
-                    </p>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <button
-                      onClick={startDownload}
-                      className="rounded-[18px] border border-white bg-white/65 py-3.5 text-sm font-bold text-slate-700 shadow-sm backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:bg-white hover:shadow-lg"
-                    >
-                      Download Again
-                    </button>
-
-                    <button
-                      onClick={resetSong}
-                      className="rounded-[18px] bg-slate-900 py-3.5 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:-translate-y-1 hover:bg-slate-800 hover:shadow-xl"
-                    >
-                      New Song
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* FEATURES */}
-        <section className="mx-auto mt-14 max-w-3xl">
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[
-              {
-                icon: "♫",
-                title: "High Quality",
-                text: "Up to 320 kbps audio.",
-                bg: "bg-red-50",
-                textColor: "text-red-500",
-              },
-              {
-                icon: "◈",
-                title: "Artwork",
-                text: "Album artwork included.",
-                bg: "bg-pink-50",
-                textColor: "text-pink-500",
-              },
-              {
-                icon: "↯",
-                title: "Live Progress",
-                text: "Watch conversion in real time.",
-                bg: "bg-purple-50",
-                textColor: "text-purple-500",
-              },
-            ].map((feature) => (
-              <div
-                key={feature.title}
-                className="group rounded-[24px] border border-white/90 bg-white/45 p-5 text-center shadow-sm backdrop-blur-xl transition-all duration-300 hover:-translate-y-2 hover:bg-white/70 hover:shadow-xl"
-              >
-                <div
-                  className={`
-                    mx-auto
-                    flex
-                    h-12
-                    w-12
-                    items-center
-                    justify-center
-                    rounded-2xl
-                    ${feature.bg}
-                    ${feature.textColor}
-                    transition-all
-                    duration-300
-                    group-hover:scale-110
-                    group-hover:rotate-3
-                  `}
-                >
-                  {feature.icon}
-                </div>
-
-                <h3 className="mt-4 text-sm font-bold text-slate-800">
-                  {feature.title}
-                </h3>
-
-                <p className="mt-1 text-xs leading-5 text-slate-400">
-                  {feature.text}
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* FOOTER */}
-        <footer className="mt-16 text-center">
-          <div className="mx-auto mb-3 h-px max-w-xs bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
-
-          <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-slate-400">
-            YouTubeMP3
-          </p>
-
-          <p className="mt-1 text-xs text-slate-400">Simple audio conversion</p>
-        </footer>
-      </main>
-    </div>
-  );
+    return e.value;
+  }
+  take(key) {
+    const v = this.get(key);
+    this.map.delete(key);
+    return v;
+  }
+  del(key) {
+    this.map.delete(key);
+  }
+  sweep() {
+    const now = Date.now();
+    for (const [k, e] of this.map) if (e.exp < now) this.map.delete(k);
+  }
 }
 
-export default App;
+// ---------------------------------------------------------------------------
+// PRIMARY PROCESS (load balancer / supervisor)
+// ---------------------------------------------------------------------------
+if (cluster.isPrimary && WORKERS > 1) {
+  console.log(`Primary ${process.pid} starting ${WORKERS} workers`);
+
+  fs.rmSync(TEMP_DIR, { recursive: true, force: true }); // clear stale files
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+  const store = new MemStore();
+  setInterval(() => store.sweep(), 30_000).unref();
+
+  const handleMessage = (worker, msg) => {
+    if (!msg || msg.type !== "store") return;
+    let out = null;
+    switch (msg.op) {
+      case "set":
+        store.set(msg.key, msg.value, msg.ttl);
+        break;
+      case "get":
+        out = store.get(msg.key);
+        break;
+      case "take":
+        out = store.take(msg.key);
+        break;
+      case "del":
+        store.del(msg.key);
+        break;
+    }
+    if (msg.id && worker.isConnected()) {
+      worker.send({ type: "store-reply", id: msg.id, value: out });
+    }
+  };
+
+  const fork = () =>
+    cluster.fork().on("message", function (m) {
+      handleMessage(this, m);
+    });
+  for (let i = 0; i < WORKERS; i++) fork();
+
+  cluster.on("exit", (worker, code, signal) => {
+    console.error(
+      `Worker ${worker.process.pid} died (${signal || code}). Restarting...`,
+    );
+    setTimeout(fork, 1000);
+  });
+
+  const shutdown = () => {
+    for (const id in cluster.workers)
+      cluster.workers[id].process.kill("SIGTERM");
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+} else {
+  startWorker();
+}
+
+// ---------------------------------------------------------------------------
+// WORKER / SINGLE-PROCESS SERVER
+// ---------------------------------------------------------------------------
+function startWorker() {
+  const express = require("express");
+  const cors = require("cors");
+  const sharp = require("sharp");
+
+  fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+  if (isProduction) {
+    process.env.PATH = `${process.env.PATH}:${path.join(__dirname, "bin")}`;
+  }
+
+  // ---- store client ------------------------------------------------------
+  let store;
+  if (cluster.isWorker) {
+    let seq = 0;
+    const pending = new Map();
+    process.on("message", (m) => {
+      if (m && m.type === "store-reply") {
+        const resolve = pending.get(m.id);
+        if (resolve) {
+          pending.delete(m.id);
+          resolve(m.value);
+        }
+      }
+    });
+    const rpc = (op, key, value, ttl, wantReply = true) =>
+      new Promise((resolve) => {
+        if (!wantReply) {
+          process.send({ type: "store", op, key, value, ttl });
+          return resolve(null);
+        }
+        const id = ++seq;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          resolve(null);
+        }, 2000);
+        pending.set(id, (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        });
+        process.send({ type: "store", id, op, key, value, ttl });
+      });
+    store = {
+      set: (k, v, ttl) => rpc("set", k, v, ttl, false),
+      get: (k) => rpc("get", k),
+      take: (k) => rpc("take", k),
+      del: (k) => rpc("del", k, null, 0, false),
+    };
+  } else {
+    const local = new MemStore();
+    setInterval(() => local.sweep(), 30_000).unref();
+    fs.readdirSync(TEMP_DIR).forEach((f) =>
+      fs.rmSync(path.join(TEMP_DIR, f), { force: true }),
+    );
+    store = {
+      set: async (k, v, ttl) => local.set(k, v, ttl),
+      get: async (k) => local.get(k),
+      take: async (k) => local.take(k),
+      del: async (k) => local.del(k),
+    };
+  }
+
+  // ---- helpers -----------------------------------------------------------
+  const lastProgress = new Map(); // per-worker throttle
+  const setProgress = (id, value) => {
+    if (lastProgress.get(id) === value) return;
+    lastProgress.set(id, value);
+    store.set(`${id}:p`, value, PROGRESS_TTL);
+  };
+
+  class Limiter {
+    constructor(max) {
+      this.max = max;
+      this.active = 0;
+      this.queue = [];
+    }
+    get waiting() {
+      return this.queue.length;
+    }
+    acquire() {
+      if (this.active < this.max) {
+        this.active++;
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => this.queue.push(resolve));
+    }
+    release() {
+      const next = this.queue.shift();
+      if (next) next();
+      else this.active--;
+    }
+  }
+  const limiter = new Limiter(MAX_JOBS);
+
+  const rm = (...files) =>
+    Promise.all(
+      files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {})),
+    );
+
+  const UUID_RE = /^[0-9a-f-]{36}$/i;
+  const VIDEO_ID_RE = /^[\w-]{11}$/;
+  const YT_HOSTS = new Set([
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+  ]);
+
+  /** Returns { id, url } with a canonical URL, or null if not a valid YouTube link. */
+  function parseYouTubeUrl(input) {
+    try {
+      const u = new URL(String(input).trim());
+      if (
+        !["http:", "https:"].includes(u.protocol) ||
+        !YT_HOSTS.has(u.hostname)
+      )
+        return null;
+      let id = null;
+      if (u.hostname === "youtu.be") {
+        id = u.pathname.slice(1).split("/")[0];
+      } else if (u.pathname === "/watch") {
+        id = u.searchParams.get("v");
+      } else {
+        const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{11})/);
+        if (m) id = m[1];
+      }
+      if (!id || !VIDEO_ID_RE.test(id)) return null;
+      return { id, url: `https://www.youtube.com/watch?v=${id}` };
+    } catch {
+      return null;
+    }
+  }
+
+  const safeFileName = (title) =>
+    String(title || "")
+      .replace(/[\/\\:*?"<>|\u0000-\u001f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 150) || "audio";
+
+  const ytDlpBaseArgs = () => {
+    const args = [
+      "--no-playlist",
+      "--no-warnings",
+      "--js-runtimes",
+      `node:${NODE_PATH}`,
+    ];
+    if (fs.existsSync(COOKIE_PATH)) args.push("--cookies", COOKIE_PATH);
+    return args;
+  };
+
+  // ---- metadata ---------------------------------------------------------------
+  // /api/song uses YouTube's fast oEmbed. The full tags come from the SAME yt-dlp
+  // process that downloads the audio (no second yt-dlp run = no CPU contention).
+  const metaCache = new Map(); // videoId -> { meta, exp }
+
+  async function fetchOEmbed(url) {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+      { signal: AbortSignal.timeout(8000) },
+    );
+    if (!res.ok) throw new Error(`oEmbed status ${res.status}`);
+    return res.json();
+  }
+
+  // "Artist - Topic" / "ArtistVEVO" -> "Artist"
+  const cleanArtist = (n) =>
+    String(n || "")
+      .replace(/\s*-\s*Topic$/i, "")
+      .replace(/(?<=.)VEVO$/i, "")
+      .trim();
+
+  // ---- artist list helpers -------------------------------------------------------
+  /** "A, B & C" / "A feat. B" / ["A","B"]  ->  ["A","B","C"]  (keeps "Simon & Garfunkel" intact) */
+  function splitNames(input, alwaysAmp = false) {
+    const out = [];
+    for (const raw of Array.isArray(input) ? input : [input]) {
+      const str = String(raw || "").trim();
+      if (!str) continue;
+      const segs = str
+        .split(/\s*[;,]\s*|\s+(?:feat\.?|ft\.?|featuring)\s+/i)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (segs.length > 1 || alwaysAmp) {
+        // list style ("A, B & C"): the last item may be joined with & / and
+        const last = segs.pop();
+        segs.push(
+          ...last
+            .split(/\s+(?:&|and)\s+/i)
+            .map((x) => x.trim())
+            .filter(Boolean),
+        );
+      }
+      out.push(...segs);
+    }
+    return out;
+  }
+
+  function uniqueNames(list) {
+    const seen = new Set();
+    return list
+      .map((n) => n.replace(/^[\s\-–—·•]+|[\s\-–—·•]+$/g, "").trim())
+      .filter(
+        (n) =>
+          n &&
+          n.length <= 80 &&
+          !seen.has(n.toLowerCase()) &&
+          seen.add(n.toLowerCase()),
+      );
+  }
+
+  /** Credits found in a video description (labels / auto-generated music block). */
+  function creditsFromDescription(desc) {
+    const text = String(desc || "").slice(0, 8000);
+    if (!text) return {};
+
+    // Auto-generated: "Provided to YouTube by X\n\nSong · Artist1 · Artist2 ..."
+    const prov = text.match(/Provided to YouTube by[^\n]*\n+\s*([^\n]+)/i);
+    if (prov && prov[1].includes(" · ")) {
+      const parts = prov[1].split(" · ").map((x) => x.trim());
+      parts.shift(); // song title
+      if (parts.length) return { artists: parts };
+    }
+
+    // Label style: "Singer: A, B" / "Music: C" (also several on one line separated by | or •)
+    const grab = (re) => {
+      const m = text.match(re);
+      if (!m) return "";
+      return m[1]
+        .split(/\s+[|•]\s+/)[0]
+        .replace(/https?:\/\/\S+/g, "")
+        .replace(/\([^)]*\)/g, "")
+        .trim();
+    };
+    const composer = grab(
+      /(?:^|\n|[|•])\s*(?:music(?:\s*(?:director|composed(?:\s*by)?|by))?|composer|composed\s*by)\s*[:\-–—]\s*([^\n]+)/i,
+    );
+    const singers = grab(
+      /(?:^|\n|[|•])\s*(?:singers?|vocals?|sung\s*by|performed\s*by|artists?)\s*[:\-–—]\s*([^\n]+)/i,
+    );
+    return { composer, singers };
+  }
+
+  // Removes "(Official Video)", "[Lyrical Video]", "(Full Song)", "(HD)" ... but keeps "(From "Movie")", "(Remix)"
+  const NOISE_RE =
+    /\s*[\(\[][^\)\]]*\b(?:official|video|audio|lyrics?|lyrical|visuali[sz]er|mv|full\s+song|hd|4k)\b[^\)\]]*[\)\]]\s*/gi;
+  /** "Song (Full Video) | Movie | Cast" -> "Song" */
+  function cleanTitle(raw) {
+    const first = String(raw || "").split(/\s+[|\uFF5C]\s+/)[0];
+    const cleaned = first
+      .replace(NOISE_RE, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    return cleaned || String(raw || "").trim();
+  }
+  // "Artist - Song" -> { artist: "Artist", song: "Song" }
+  function parseArtistTitle(raw) {
+    const m = String(raw || "")
+      .trim()
+      .match(/^(.{1,70}?)\s+[-\u2013\u2014]\s+(.+)$/);
+    if (!m) return null;
+    const artist = m[1].trim();
+    const song = cleanTitle(m[2]);
+    return artist && song ? { artist, song } : null;
+  }
+
+  /** Build tag data from yt-dlp's info JSON (v) and/or oEmbed (o). Either may be empty. */
+  function buildMeta(v, o) {
+    v = v || {};
+    o = o || {};
+    const channel = v.channel || v.uploader || o.author_name || "";
+
+    // Artist priority:
+    //  1) official artist fields   2) "Provided to YouTube" block   3) description credits (singers + music)
+    //  4) "Artist - Song" in the title   5) channel name
+    const credits = creditsFromDescription(v.description);
+    let names = uniqueNames(
+      splitNames(
+        Array.isArray(v.artists) && v.artists.length
+          ? v.artists
+          : [v.artist || v.track_artist || v.album_artist || ""],
+      ),
+    );
+    if (!names.length && credits.artists)
+      names = uniqueNames(splitNames(credits.artists, true));
+    if (!names.length && credits.singers) {
+      names = uniqueNames([
+        ...splitNames(credits.composer, true),
+        ...splitNames(credits.singers, true),
+      ]);
+    }
+    let singer = names.join(", ");
+
+    const cleanedTitle = cleanTitle(v.title || o.title);
+    let title = v.track || cleanedTitle || `audio-${Date.now()}`;
+    const parsed = v.track ? null : parseArtistTitle(cleanedTitle);
+    if (parsed) {
+      if (!singer) {
+        singer = uniqueNames(splitNames(parsed.artist)).join(", ");
+        title = parsed.song;
+      } else if (singer.toLowerCase().includes(parsed.artist.toLowerCase())) {
+        title = parsed.song; // title repeated the artist: keep only the song name
+      }
+    }
+    if (!singer) singer = cleanArtist(channel) || "Unknown Artist";
+
+    const composer = uniqueNames(splitNames(credits.composer || "", true)).join(
+      ", ",
+    );
+    const uploadDate = String(v.upload_date || "");
+    const releaseYear = v.release_year
+      ? String(v.release_year)
+      : String(v.release_date || uploadDate).slice(0, 4);
+
+    // YouTube Music / "Topic" uploads expose real square album art
+    const squareCover =
+      (Array.isArray(v.thumbnails) ? v.thumbnails : [])
+        .filter((t) => t.url && t.width && t.width === t.height)
+        .sort((x, y) => y.width - x.width)[0]?.url || "";
+
+    return {
+      title,
+      singer,
+      composer,
+      channel: channel || "Unknown Channel",
+      album: v.album || "",
+      duration: Number(v.duration) || 0,
+      cover: v.thumbnail || o.thumbnail_url || "",
+      squareCover,
+      uploadDate,
+      releaseYear,
+    };
+  }
+
+  // Rich metadata is kept locally and in the shared store (so any worker can serve it).
+  function cacheMeta(videoId, meta) {
+    metaCache.set(videoId, { meta, exp: Date.now() + META_TTL });
+    if (metaCache.size > 500) metaCache.delete(metaCache.keys().next().value);
+    return store.set(`meta:${videoId}`, meta, META_TTL);
+  }
+
+  async function getCachedMeta(videoId) {
+    const hit = metaCache.get(videoId);
+    if (hit && hit.exp > Date.now()) return hit.meta;
+    return (await store.get(`meta:${videoId}`)) || null;
+  }
+
+  // ---- background "full details" lookup for the preview card ------------------------
+  // One low-priority yt-dlp run per worker. It is cancelled as soon as the user starts the
+  // download (the download's own yt-dlp run supplies the same data), so they never compete.
+  const BACKGROUND_META = process.env.BACKGROUND_META !== "0";
+  const metaLimiter = new Limiter(1);
+  const metaJobs = new Map(); // videoId -> { proc, cancelled }
+
+  function spawnInfoJson(url) {
+    const args = [
+      "--ignore-config",
+      "--dump-single-json",
+      "--skip-download",
+      "--ignore-no-formats-error",
+      ...ytDlpBaseArgs(),
+      url,
+    ];
+    const proc = spawn(YT_DLP_PATH, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    let err = "";
+    proc.stdout.on("data", (d) => (out += d));
+    proc.stderr.on("data", (d) => (err = (err + d).slice(-1500)));
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        proc.kill("SIGKILL");
+        reject(new Error("yt-dlp metadata timed out"));
+      }, INFO_TIMEOUT);
+      proc.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+      // killed (cancelled / timeout): finish immediately, don't wait for pipes to drain
+      proc.on("exit", (code, signal) => {
+        if (signal) {
+          clearTimeout(timer);
+          reject(new Error(`yt-dlp stopped (${signal})`));
+        }
+      });
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (code !== 0)
+          return reject(
+            new Error(err.trim() || `yt-dlp exited with code ${code}`),
+          );
+        try {
+          resolve(JSON.parse(out));
+        } catch {
+          reject(new Error("Could not parse yt-dlp JSON"));
+        }
+      });
+    });
+    return { proc, promise };
+  }
+
+  function startMetaFetch(videoId, url) {
+    if (!BACKGROUND_META || metaJobs.has(videoId)) return;
+    const job = { proc: null, cancelled: false };
+    metaJobs.set(videoId, job);
+
+    (async () => {
+      let acquired = false;
+      let watcher = null;
+      try {
+        await metaLimiter.acquire();
+        acquired = true;
+        // a download for this video already started (or is running): its own yt-dlp run supplies the data
+        if (job.cancelled || (await store.get(`metastop:${videoId}`))) return;
+
+        const { proc, promise } = spawnInfoJson(url);
+        job.proc = proc;
+        // cancellation may come from another worker (cluster) through the shared store
+        watcher = setInterval(async () => {
+          if (await store.get(`metastop:${videoId}`)) {
+            job.cancelled = true;
+            proc.kill("SIGKILL");
+          }
+        }, 1000);
+
+        const [info, o] = await Promise.all([
+          promise,
+          fetchOEmbed(url).catch(() => null),
+        ]);
+        if (job.cancelled) return;
+        await cacheMeta(videoId, buildMeta(info, o));
+      } catch (e) {
+        if (!job.cancelled) {
+          console.error("background metadata failed:", e.message);
+          await store.set(`metafail:${videoId}`, 1, 120_000);
+        }
+      } finally {
+        if (watcher) clearInterval(watcher);
+        if (acquired) metaLimiter.release();
+        metaJobs.delete(videoId);
+      }
+    })();
+  }
+
+  function cancelMetaFetch(videoId) {
+    store.set(`metastop:${videoId}`, 1, 10 * 60_000);
+    const job = metaJobs.get(videoId);
+    if (job) {
+      job.cancelled = true;
+      if (job.proc) job.proc.kill("SIGKILL");
+    }
+  }
+
+  const publicMeta = (m, detailsReady) => ({
+    song_name: m.title,
+    singer: m.singer,
+    channel: m.channel,
+    album: m.album || "",
+    duration: m.duration,
+    cover: m.squareCover || m.cover, // prefer real square album art
+    releaseYear: m.releaseYear,
+    composer: m.composer || "",
+    detailsReady,
+  });
+
+  // ---- cover art -----------------------------------------------------------
+  async function fetchImage(url) {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    return r.ok ? Buffer.from(await r.arrayBuffer()) : null;
+  }
+
+  /**
+   * Builds an Apple Music-friendly cover: square, sRGB, baseline JPEG, no alpha,
+   * no EXIF/ICC extras. Prefers YouTube's real square album art when available.
+   */
+  async function prepareCover(videoId, outPath, squareUrl) {
+    const sources = [];
+    if (squareUrl) sources.push({ url: squareUrl, square: true });
+    for (const n of ["maxresdefault", "sddefault", "hqdefault"]) {
+      sources.push({
+        url: `https://i.ytimg.com/vi/${videoId}/${n}.jpg`,
+        square: false,
+      });
+    }
+
+    for (const src of sources) {
+      try {
+        const input = await fetchImage(src.url);
+        if (!input) continue;
+
+        let img;
+        if (src.square || COVER_MODE === "crop") {
+          img = sharp(input).resize(COVER_SIZE, COVER_SIZE, {
+            fit: "cover",
+            position: "centre",
+          });
+        } else {
+          // keep the whole frame, fill the rest with a blurred, darkened copy
+          const bg = await sharp(input)
+            .resize(COVER_SIZE, COVER_SIZE, { fit: "cover" })
+            .blur(40)
+            .modulate({ brightness: 0.7 })
+            .toBuffer();
+          const fg = await sharp(input)
+            .resize(COVER_SIZE, COVER_SIZE, { fit: "inside" })
+            .toBuffer();
+          img = sharp(bg).composite([{ input: fg, gravity: "centre" }]);
+        }
+
+        await img
+          .flatten({ background: "#000000" }) // no transparency
+          .toColorspace("srgb") // never CMYK / grayscale
+          .jpeg({ quality: 92, progressive: false, chromaSubsampling: "4:2:0" }) // baseline JPEG
+          .toFile(outPath); // metadata (EXIF/ICC) is stripped by default
+
+        return true;
+      } catch (e) {
+        console.error("Cover failed:", src.url, e.message);
+      }
+    }
+    return false;
+  }
+
+  // ---- audio stream + metadata in ONE yt-dlp run -------------------------------
+  const INFO_TIMEOUT = Number(process.env.INFO_TIMEOUT_MS) || 120_000;
+
+  function startAudioProcess(url, infoPath) {
+    const args = [
+      ...ytDlpBaseArgs(),
+      "--no-check-certificates",
+      "--http-chunk-size",
+      "10M",
+      "--concurrent-fragments",
+      "4",
+      "--no-part",
+      // write the full info JSON to a file right before the download starts
+      "--print-to-file",
+      "before_dl:%()j",
+      infoPath.replace(/%/g, "%%"),
+      "--format",
+      "bestaudio/best",
+      "--output",
+      "-",
+      url,
+    ];
+    const proc = spawn(YT_DLP_PATH, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    proc.ytErr = "";
+    proc.on("error", (e) => {
+      proc.ytErr += e.message;
+      console.error("Failed to start yt-dlp:", e.message);
+    });
+    proc.stderr.on("data", (d) => {
+      const t = d.toString().trim();
+      proc.ytErr = (proc.ytErr + "\n" + t).slice(-1500);
+      if (t) console.error("yt-dlp:", t);
+    });
+
+    // Buffer audio while we wait for the info JSON (so yt-dlp can keep downloading).
+    const audio = new PassThrough({ highWaterMark: 4 * 1024 * 1024 });
+    proc.stdout.pipe(audio);
+    proc.stdout.on("error", () => {});
+
+    const started = Date.now();
+    let firstByteAt = 0;
+    proc.stdout.once("data", () => (firstByteAt = Date.now()));
+
+    const readInfo = () => {
+      try {
+        const line = fs.readFileSync(infoPath, "utf8").split("\n")[0].trim();
+        return line ? JSON.parse(line) : null;
+      } catch {
+        return null; // not written yet / partially written
+      }
+    };
+
+    const infoReady = new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        clearInterval(timer);
+        resolve(v);
+      };
+      const timer = setInterval(() => {
+        const info = readInfo();
+        if (info) return finish(info);
+        if (firstByteAt && Date.now() - firstByteAt > 1500) return finish(null); // audio flowing, no info file
+        if (Date.now() - started > INFO_TIMEOUT) finish(null);
+      }, 100);
+      proc.on("close", () => finish(readInfo()));
+    });
+
+    return { proc, audio, infoReady };
+  }
+
+  // ---- express app -------------------------------------------------------------
+  const app = express();
+  app.disable("x-powered-by");
+  app.use(
+    cors({
+      origin: ALLOW_ALL_ORIGINS ? true : ALLOWED_ORIGINS,
+      exposedHeaders: ["X-Download-ID", "Content-Disposition"],
+    }),
+  );
+  app.use(express.json({ limit: "10kb" }));
+
+  app.get("/", (req, res) => res.send("Backend is working"));
+
+  // ---- startup self-check (shows up in Render logs and /health) --------------
+  const run = (cmd, args) =>
+    new Promise((resolve) => {
+      const c = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      c.stdout.on("data", (d) => (out += d));
+      c.stderr.on("data", (d) => (out += d));
+      c.on("error", (e) => resolve({ ok: false, out: e.message }));
+      c.on("close", (code) => resolve({ ok: code === 0, out }));
+    });
+
+  let toolStatus = { checking: true };
+  (async () => {
+    const [yt, ff, enc] = await Promise.all([
+      run(YT_DLP_PATH, ["--version"]),
+      run(FFMPEG_PATH, ["-version"]),
+      run(FFMPEG_PATH, ["-hide_banner", "-encoders"]),
+    ]);
+    toolStatus = {
+      ytDlp: yt.ok
+        ? yt.out.trim()
+        : `MISSING (${YT_DLP_PATH}): ${yt.out.trim().slice(0, 120)}`,
+      ffmpeg: ff.ok
+        ? ff.out.split("\n")[0]
+        : `MISSING (${FFMPEG_PATH}): ${ff.out.trim().slice(0, 120)}`,
+      mp3Encoder: enc.ok && /libmp3lame/.test(enc.out),
+      cookiesFile: fs.existsSync(COOKIE_PATH),
+      node: process.version,
+    };
+    console.log(`[${process.pid}] TOOL CHECK:`, JSON.stringify(toolStatus));
+    if (!toolStatus.mp3Encoder)
+      console.error(
+        "WARNING: ffmpeg has no libmp3lame, MP3 conversion will fail.",
+      );
+  })();
+
+  app.get("/health", (req, res) =>
+    res.json({
+      ok: true,
+      pid: process.pid,
+      activeJobs: limiter.active,
+      queued: limiter.waiting,
+      workers: WORKERS,
+      allowedOrigins: ALLOW_ALL_ORIGINS ? "*" : ALLOWED_ORIGINS,
+      tools: toolStatus,
+    }),
+  );
+
+  // Metadata only (for preview)
+  // Instant preview (oEmbed) - full details are fetched in the background
+  app.post("/api/song", async (req, res) => {
+    const parsed = parseYouTubeUrl(req.body?.url);
+    if (!parsed)
+      return res.status(400).json({ error: "A valid YouTube URL is required" });
+    try {
+      let m = await getCachedMeta(parsed.id);
+      let detailsReady = !!m;
+      if (!m) {
+        const o = await fetchOEmbed(parsed.url);
+        m = buildMeta(null, o);
+        startMetaFetch(parsed.id, parsed.url);
+      }
+      res.json(publicMeta(m, detailsReady));
+    } catch (e) {
+      console.error("SONG METADATA ERROR:", e.message);
+      res.status(500).json({ error: "Could not retrieve video information" });
+    }
+  });
+
+  // Poll this until { ready: true } to upgrade the preview with the full details
+  app.post("/api/song-details", async (req, res) => {
+    const parsed = parseYouTubeUrl(req.body?.url);
+    if (!parsed)
+      return res.status(400).json({ error: "A valid YouTube URL is required" });
+    const m = await getCachedMeta(parsed.id);
+    if (m) return res.json({ ready: true, ...publicMeta(m, true) });
+    const failed = !!(await store.get(`metafail:${parsed.id}`));
+    if (!failed) startMetaFetch(parsed.id, parsed.url); // no-op if already running
+    res.json({ ready: false, failed });
+  });
+
+  // PHASE 1: register a download job (fast)
+  app.post("/api/download", async (req, res) => {
+    const parsed = parseYouTubeUrl(req.body?.url);
+    const quality = String(req.body?.quality);
+    if (!parsed)
+      return res.status(400).json({ error: "A valid YouTube URL is required" });
+    if (quality !== "128" && quality !== "320") {
+      return res.status(400).json({ error: "Invalid quality" });
+    }
+    try {
+      const downloadId = crypto.randomUUID();
+      await store.set(
+        `${downloadId}:job`,
+        { videoId: parsed.id, url: parsed.url, quality },
+        JOB_TTL,
+      );
+      setProgress(downloadId, 0);
+      res.setHeader("X-Download-ID", downloadId);
+      res.json({ success: true, downloadId });
+    } catch (e) {
+      console.error("Initialization error:", e.message);
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // PHASE 2: convert + send the file
+  app.get("/api/download-file", async (req, res) => {
+    const id = String(req.query.id || "");
+    if (!UUID_RE.test(id))
+      return res.status(400).send("Invalid or expired session tracking ID");
+
+    const job = await store.take(`${id}:job`); // atomic: a job can only be claimed once
+    if (!job)
+      return res.status(400).send("Invalid or expired session tracking ID");
+
+    if (limiter.waiting >= MAX_QUEUE) {
+      setProgress(id, -1);
+      res.setHeader("Retry-After", "10");
+      return res.status(503).send("Server busy, please retry shortly.");
+    }
+
+    const { videoId, url, quality } = job;
+    cancelMetaFetch(videoId); // the download run supplies the same metadata
+    const outPath = path.join(TEMP_DIR, `${id}.mp3`);
+    const coverPath = path.join(TEMP_DIR, `${id}.jpg`);
+    let downloadName = "audio.mp3";
+
+    let aborted = false;
+    let infoFile = null;
+    let ytProc = null;
+    let command = null;
+    res.on("close", () => {
+      if (res.writableFinished) return;
+      aborted = true; // client left: stop all work
+      if (ytProc) ytProc.kill("SIGKILL");
+      if (command) {
+        try {
+          command.kill("SIGKILL");
+        } catch {}
+      }
+    });
+
+    let acquired = false;
+    try {
+      await limiter.acquire();
+      acquired = true;
+      if (aborted) throw new Error("Client disconnected");
+
+      // Start downloading audio while cover art is prepared in parallel.
+      const infoPath = path.join(TEMP_DIR, `${id}.info.json`);
+      infoFile = infoPath;
+      const oembedP = fetchOEmbed(url).catch(() => null);
+      const started = startAudioProcess(url, infoPath);
+      ytProc = started.proc;
+      const audioStream = started.audio;
+
+      const info = await started.infoReady; // arrives just before audio starts flowing
+      if (aborted) throw new Error("Client disconnected");
+      const meta = buildMeta(info, await oembedP);
+      if (!info)
+        console.warn(
+          `[${process.pid}] ${id}: no yt-dlp info JSON, using oEmbed tags only`,
+        );
+      cacheMeta(videoId, meta);
+      downloadName = `${safeFileName(meta.singer && meta.singer !== "Unknown Artist" ? `${meta.singer} - ${meta.title}` : meta.title)} [${quality}kbps].mp3`;
+      const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
+      if (aborted) throw new Error("Client disconnected");
+
+      console.log(
+        `[${process.pid}] ${id}: cover=${hasCover ? "yes" : "NO"} title="${meta.title}"`,
+      );
+
+      await new Promise((resolve, reject) => {
+        const clean = (v) =>
+          String(v || "")
+            .replace(/\u0000/g, "")
+            .trim();
+        const args = [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-nostats",
+          "-progress",
+          "pipe:1",
+          "-i",
+          "pipe:0",
+        ];
+        if (hasCover) args.push("-i", coverPath);
+
+        args.push("-map", "0:a:0");
+        if (hasCover) args.push("-map", "1:v:0");
+
+        args.push(
+          "-c:a",
+          "libmp3lame",
+          "-b:a",
+          `${quality}k`,
+          "-compression_level",
+          "7",
+        );
+        if (hasCover) args.push("-c:v", "copy");
+
+        args.push(
+          "-id3v2_version",
+          "3",
+          "-write_id3v1",
+          "1",
+          "-metadata",
+          `title=${clean(meta.title)}`,
+          "-metadata",
+          `artist=${clean(meta.singer)}`,
+          "-metadata",
+          `album=${clean(meta.album) || clean(meta.title)}`,
+          "-metadata",
+          `album_artist=${clean(meta.singer)}`,
+          ...(meta.composer
+            ? ["-metadata", `composer=${clean(meta.composer)}`]
+            : []),
+          "-metadata",
+          "genre=Music",
+          "-metadata",
+          `date=${clean(meta.releaseYear)}`,
+        );
+        if (hasCover) {
+          args.push(
+            "-metadata:s:v",
+            "title=Album cover",
+            "-metadata:s:v",
+            "comment=Cover (front)",
+            "-disposition:v:0",
+            "attached_pic",
+          );
+        }
+        args.push("-f", "mp3", "-y", outPath);
+
+        // args are passed as an array: no shell, no space-splitting problems
+        const ff = spawn(FFMPEG_PATH, args, {
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        command = ff;
+
+        audioStream.pipe(ff.stdin);
+        ff.stdin.on("error", () => {}); // ffmpeg may close stdin early
+
+        let errTail = "";
+        ff.stderr.on("data", (d) => (errTail = (errTail + d).slice(-2000)));
+
+        let buf = "";
+        ff.stdout.on("data", (d) => {
+          buf += d;
+          const lines = buf.split("\n");
+          buf = lines.pop();
+          for (const line of lines) {
+            const m = line.match(/^out_time_(?:us|ms)=(\d+)/);
+            if (!m) continue;
+            const secs = Number(m[1]) / 1e6;
+            if (secs <= 0) continue;
+            const pct =
+              meta.duration > 0
+                ? (secs / meta.duration) * 100
+                : 99 * (1 - Math.exp(-secs / 180));
+            setProgress(id, Math.min(Math.max(Math.round(pct), 0), 99));
+          }
+        });
+
+        ff.on("error", (e) =>
+          reject(new Error(`ffmpeg failed to start: ${e.message}`)),
+        );
+        ff.on("close", (code) => {
+          if (code === 0) return resolve();
+          reject(
+            new Error(`ffmpeg exited with code ${code}: ${errTail.trim()}`),
+          );
+        });
+      });
+
+      limiter.release(); // free CPU slot before streaming the file to the client
+      acquired = false;
+      setProgress(id, 100);
+
+      if (aborted) throw new Error("Client disconnected");
+
+      const stat = await fs.promises.stat(outPath);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", stat.size);
+      res.setHeader("X-Download-ID", id);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="song.mp3"; filename*=UTF-8''${encodeURIComponent(downloadName)}`,
+      );
+      await pipeline(fs.createReadStream(outPath), res);
+    } catch (e) {
+      if (!aborted)
+        console.error(
+          "Streaming error:",
+          e.message,
+          ytProc && ytProc.ytErr ? `| yt-dlp: ${ytProc.ytErr}` : "",
+        );
+      setProgress(id, -1);
+      if (!res.headersSent) res.status(500).send("Audio compilation failed.");
+      else res.destroy();
+    } finally {
+      if (acquired) limiter.release();
+      if (ytProc) ytProc.kill("SIGKILL");
+      await rm(outPath, coverPath, infoFile);
+      setTimeout(() => lastProgress.delete(id), 60_000).unref();
+    }
+  });
+
+  // Progress via Server-Sent Events (works across workers via shared store)
+  app.get("/api/progress/:id", (req, res) => {
+    const id = req.params.id;
+    if (!UUID_RE.test(id)) return res.status(400).end();
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // stop nginx from buffering SSE
+    res.flushHeaders();
+
+    let closed = false;
+    let last = -2;
+    const tick = async () => {
+      if (closed) return;
+      const p = (await store.get(`${id}:p`)) ?? 0;
+      if (closed) return;
+      if (p !== last) {
+        last = p;
+        res.write(
+          `data: ${JSON.stringify({ progress: Math.max(p, 0), error: p < 0 })}\n\n`,
+        );
+      }
+      if (p >= 100 || p < 0) {
+        clearInterval(timer);
+        setTimeout(() => res.end(), 300);
+      }
+    };
+    const timer = setInterval(tick, 500);
+    const heartbeat = setInterval(
+      () => !closed && res.write(": ping\n\n"),
+      15_000,
+    );
+    req.on("close", () => {
+      closed = true;
+      clearInterval(timer);
+      clearInterval(heartbeat);
+    });
+    tick();
+  });
+
+  const server = app.listen(PORT, () =>
+    console.log(
+      `[${process.pid}] Server live on port ${PORT} (${cluster.isWorker ? "worker" : "single"})`,
+    ),
+  );
+
+  process.on("SIGTERM", () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref();
+  });
+}
