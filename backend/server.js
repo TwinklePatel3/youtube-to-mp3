@@ -66,13 +66,12 @@ const YT_DLP_PATH = resolveBinary(
 
 // CORS_ORIGINS="*" allows every origin; otherwise a comma-separated list.
 const ALLOW_ALL_ORIGINS = process.env.CORS_ORIGINS === "*";
-
 const ALLOWED_ORIGINS = (
   process.env.CORS_ORIGINS ||
   "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,https://youtube-to-audio.netlify.app,https://youtube-to-mp3-rho.vercel.app"
 )
   .split(",")
-  .map((s) => s.trim().replace(/\/$/, ""))
+  .map((s) => s.trim().replace(/\/$/, "")) // tolerate a trailing slash
   .filter(Boolean);
 
 // ---------------------------------------------------------------------------
@@ -1074,84 +1073,63 @@ function startWorker() {
     res.json({ ready: false, failed });
   });
 
-  // PHASE 1: register a download job (fast)
-  app.post("/api/download", async (req, res) => {
-    const parsed = parseYouTubeUrl(req.body?.url);
-    const quality = String(req.body?.quality);
-    if (!parsed)
-      return res.status(400).json({ error: "A valid YouTube URL is required" });
-    if (quality !== "128" && quality !== "320") {
-      return res.status(400).json({ error: "Invalid quality" });
-    }
-    try {
-      const downloadId = crypto.randomUUID();
-      await store.set(
-        `${downloadId}:job`,
-        { videoId: parsed.id, url: parsed.url, quality },
-        JOB_TTL,
-      );
-      setProgress(downloadId, 0);
-      res.setHeader("X-Download-ID", downloadId);
-      res.json({ success: true, downloadId });
-    } catch (e) {
-      console.error("Initialization error:", e.message);
-      res.status(400).json({ error: e.message });
-    }
-  });
+  // ---- conversion job (shared by the link flow and the legacy streaming flow) --------
+  const FILE_TTL = 20 * 60 * 1000; // converted files stay downloadable this long
 
-  // PHASE 2: convert + send the file
-  app.get("/api/download-file", async (req, res) => {
-    const id = String(req.query.id || "");
-    if (!UUID_RE.test(id))
-      return res.status(400).send("Invalid or expired session tracking ID");
-
-    const job = await store.take(`${id}:job`); // atomic: a job can only be claimed once
-    if (!job)
-      return res.status(400).send("Invalid or expired session tracking ID");
-
-    if (limiter.waiting >= MAX_QUEUE) {
-      setProgress(id, -1);
-      res.setHeader("Retry-After", "10");
-      return res.status(503).send("Server busy, please retry shortly.");
-    }
-
-    const { videoId, url, quality } = job;
-    cancelMetaFetch(videoId); // the download run supplies the same metadata
-    const outPath = path.join(TEMP_DIR, `${id}.mp3`);
-    const coverPath = path.join(TEMP_DIR, `${id}.jpg`);
-    let downloadName = "audio.mp3";
-
-    let aborted = false;
-    let infoFile = null;
-    let ytProc = null;
-    let command = null;
-    res.on("close", () => {
-      if (res.writableFinished) return;
-      aborted = true; // client left: stop all work
-      if (ytProc) ytProc.kill("SIGKILL");
-      if (command) {
+  const makeCtl = () => ({
+    aborted: false,
+    ytProc: null,
+    command: null,
+    abort() {
+      this.aborted = true;
+      if (this.ytProc) this.ytProc.kill("SIGKILL");
+      if (this.command) {
         try {
-          command.kill("SIGKILL");
+          this.command.kill("SIGKILL");
         } catch {}
       }
-    });
+    },
+  });
 
+  const dispositionFor = (name) => {
+    const ascii = name.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "");
+    const encoded = encodeURIComponent(name).replace(
+      /['()*]/g,
+      (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
+    );
+    return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+  };
+
+  const friendlyError = (e, ytErr) => {
+    const t = `${e && e.message} ${ytErr || ""}`;
+    if (/sign in to confirm|not a bot|HTTP Error 429/i.test(t)) {
+      return "YouTube is blocking the server right now. Please try again in a little while.";
+    }
+    if (/private video|unavailable|has been removed|copyright/i.test(t)) {
+      return "This video isn't available for download.";
+    }
+    return "Conversion failed. Please try again.";
+  };
+
+  /** Downloads the audio, converts it to a tagged MP3 and returns { outPath, downloadName }. */
+  async function convertJob({ id, videoId, url, quality, ctl }) {
+    const outPath = path.join(TEMP_DIR, `${id}.mp3`);
+    const coverPath = path.join(TEMP_DIR, `${id}.jpg`);
+    const infoPath = path.join(TEMP_DIR, `${id}.info.json`);
     let acquired = false;
     try {
       await limiter.acquire();
       acquired = true;
-      if (aborted) throw new Error("Client disconnected");
+      if (ctl.aborted) throw new Error("Cancelled");
 
-      // Start downloading audio while cover art is prepared in parallel.
-      const infoPath = path.join(TEMP_DIR, `${id}.info.json`);
-      infoFile = infoPath;
+      // Start downloading audio while metadata and cover art are prepared in parallel.
       const oembedP = fetchOEmbed(url).catch(() => null);
       const started = startAudioProcess(url, infoPath);
-      ytProc = started.proc;
+      ctl.ytProc = started.proc;
       const audioStream = started.audio;
 
       const info = await started.infoReady; // arrives just before audio starts flowing
-      if (aborted) throw new Error("Client disconnected");
+      if (ctl.aborted) throw new Error("Cancelled");
       const meta = await enrichWithItunes(
         videoId,
         buildMeta(info, await oembedP),
@@ -1161,9 +1139,9 @@ function startWorker() {
           `[${process.pid}] ${id}: no yt-dlp info JSON, using oEmbed tags only`,
         );
       cacheMeta(videoId, meta);
-      downloadName = `${meta.title} [${quality}kbps].mp3`;
+      const downloadName = `${safeFileName(meta.title)} [${quality}kbps].mp3`;
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
-      if (aborted) throw new Error("Client disconnected");
+      if (ctl.aborted) throw new Error("Cancelled");
 
       console.log(
         `[${process.pid}] ${id}: cover=${hasCover ? "yes" : "NO"} title="${meta.title}"`,
@@ -1242,7 +1220,7 @@ function startWorker() {
         const ff = spawn(FFMPEG_PATH, args, {
           stdio: ["pipe", "pipe", "pipe"],
         });
-        command = ff;
+        ctl.command = ff;
 
         audioStream.pipe(ff.stdin);
         ff.stdin.on("error", () => {}); // ffmpeg may close stdin early
@@ -1274,43 +1252,222 @@ function startWorker() {
         ff.on("close", (code) => {
           if (code === 0) return resolve();
           reject(
-            new Error(`ffmpeg exited with code ${code}: ${errTail.trim()}`),
+            new Error(
+              ctl.aborted
+                ? "Cancelled"
+                : `ffmpeg exited with code ${code}: ${errTail.trim()}`,
+            ),
           );
         });
       });
 
-      limiter.release(); // free CPU slot before streaming the file to the client
-      acquired = false;
+      return { outPath, downloadName };
+    } catch (e) {
+      e.ytErr = ctl.ytProc && ctl.ytProc.ytErr;
+      await rm(outPath);
+      throw e;
+    } finally {
+      if (acquired) limiter.release();
+      if (ctl.ytProc) ctl.ytProc.kill("SIGKILL");
+      await rm(coverPath, infoPath);
+    }
+  }
+
+  // Link flow: convert in the background, then serve the finished file from a normal URL
+  // (a real download link works in Safari and in-app browsers such as the Documents app).
+  const activeJobs = new Map(); // id -> ctl
+
+  async function runLinkJob(id, job, ctl) {
+    const watcher = setInterval(async () => {
+      if (await store.get(`${id}:cancel`)) ctl.abort();
+    }, 1000);
+    try {
+      const { outPath, downloadName } = await convertJob({ id, ...job, ctl });
+      const stat = await fs.promises.stat(outPath);
+      await store.set(
+        `${id}:ready`,
+        { name: downloadName, size: stat.size },
+        FILE_TTL,
+      );
+      setProgress(id, 100); // only after "ready" is stored
+    } catch (e) {
+      if (!ctl.aborted)
+        console.error(
+          "Conversion error:",
+          e.message,
+          e.ytErr ? `| yt-dlp: ${e.ytErr}` : "",
+        );
+      await store.set(
+        `${id}:err`,
+        ctl.aborted ? "Download cancelled." : friendlyError(e, e.ytErr),
+        PROGRESS_TTL,
+      );
+      setProgress(id, -1);
+    } finally {
+      clearInterval(watcher);
+      activeJobs.delete(id);
+      setTimeout(() => lastProgress.delete(id), 60_000).unref();
+    }
+  }
+
+  // PHASE 1: register a download job
+  app.post("/api/download", async (req, res) => {
+    const parsed = parseYouTubeUrl(req.body?.url);
+    const quality = String(req.body?.quality);
+    if (!parsed)
+      return res.status(400).json({ error: "A valid YouTube URL is required" });
+    if (quality !== "128" && quality !== "320") {
+      return res.status(400).json({ error: "Invalid quality" });
+    }
+    try {
+      const downloadId = crypto.randomUUID();
+
+      if (req.body?.delivery === "link") {
+        if (limiter.waiting >= MAX_QUEUE) {
+          res.setHeader("Retry-After", "10");
+          return res
+            .status(503)
+            .json({
+              error:
+                "The converter is busy right now. Try again in a few seconds.",
+            });
+        }
+        cancelMetaFetch(parsed.id); // the conversion supplies the same metadata
+        setProgress(downloadId, 0);
+        const ctl = makeCtl();
+        activeJobs.set(downloadId, ctl);
+        runLinkJob(
+          downloadId,
+          { videoId: parsed.id, url: parsed.url, quality },
+          ctl,
+        ); // runs in the background
+        return res.json({ success: true, downloadId, delivery: "link" });
+      }
+
+      // legacy flow: the client calls /api/download-file next
+      await store.set(
+        `${downloadId}:job`,
+        { videoId: parsed.id, url: parsed.url, quality },
+        JOB_TTL,
+      );
+      setProgress(downloadId, 0);
+      res.setHeader("X-Download-ID", downloadId);
+      res.json({ success: true, downloadId });
+    } catch (e) {
+      console.error("Initialization error:", e.message);
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Polling-friendly status (more reliable than SSE on mobile / in-app browsers)
+  app.get("/api/status/:id", async (req, res) => {
+    const id = req.params.id;
+    if (!UUID_RE.test(id)) return res.status(400).json({ error: "Invalid ID" });
+    const p = (await store.get(`${id}:p`)) ?? 0;
+    const out = { progress: Math.max(p, 0), error: false };
+    if (p < 0) {
+      out.error = true;
+      out.message =
+        (await store.get(`${id}:err`)) ||
+        "Conversion failed. Please try again.";
+    } else if (p >= 100) {
+      const ready = await store.get(`${id}:ready`);
+      if (ready)
+        Object.assign(out, { ready: true, name: ready.name, size: ready.size });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json(out);
+  });
+
+  app.post("/api/cancel", async (req, res) => {
+    const id = String(req.body?.id || "");
+    if (!UUID_RE.test(id)) return res.status(400).json({ error: "Invalid ID" });
+    await store.set(`${id}:cancel`, 1, 5 * 60_000);
+    const ctl = activeJobs.get(id);
+    if (ctl) ctl.abort();
+    res.json({ ok: true });
+  });
+
+  // The finished MP3: a plain GET that answers with a download (Range requests supported)
+  app.get("/api/file/:id", async (req, res) => {
+    const id = req.params.id;
+    if (!UUID_RE.test(id))
+      return res.status(400).send("Invalid download link.");
+    const ready = await store.get(`${id}:ready`);
+    const filePath = path.join(TEMP_DIR, `${id}.mp3`);
+    if (!ready || !fs.existsSync(filePath)) {
+      return res
+        .status(404)
+        .send("This download has expired. Please convert the song again.");
+    }
+    res.setHeader("Content-Disposition", dispositionFor(ready.name));
+    res.setHeader("Cache-Control", "private, no-cache");
+    res.type("audio/mpeg");
+    res.sendFile(filePath, (err) => {
+      if (err && !res.headersSent)
+        res.status(500).send("Could not send the file.");
+    });
+  });
+
+  // Legacy flow: convert + stream in one request (kept for older frontends)
+  app.get("/api/download-file", async (req, res) => {
+    const id = String(req.query.id || "");
+    if (!UUID_RE.test(id))
+      return res.status(400).send("Invalid or expired session tracking ID");
+
+    const job = await store.take(`${id}:job`); // atomic: a job can only be claimed once
+    if (!job)
+      return res.status(400).send("Invalid or expired session tracking ID");
+
+    if (limiter.waiting >= MAX_QUEUE) {
+      setProgress(id, -1);
+      res.setHeader("Retry-After", "10");
+      return res.status(503).send("Server busy, please retry shortly.");
+    }
+
+    cancelMetaFetch(job.videoId);
+    const ctl = makeCtl();
+    res.on("close", () => {
+      if (!res.writableFinished) ctl.abort(); // client left: stop all work
+    });
+    const outPath = path.join(TEMP_DIR, `${id}.mp3`);
+
+    try {
+      const { downloadName } = await convertJob({ id, ...job, ctl });
       setProgress(id, 100);
-
-      if (aborted) throw new Error("Client disconnected");
-
+      if (ctl.aborted) throw new Error("Cancelled");
       const stat = await fs.promises.stat(outPath);
       res.setHeader("Content-Type", "audio/mpeg");
       res.setHeader("Content-Length", stat.size);
       res.setHeader("X-Download-ID", id);
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="song.mp3"; filename*=UTF-8''${encodeURIComponent(downloadName)}`,
-      );
+      res.setHeader("Content-Disposition", dispositionFor(downloadName));
       await pipeline(fs.createReadStream(outPath), res);
     } catch (e) {
-      if (!aborted)
+      if (!ctl.aborted)
         console.error(
           "Streaming error:",
           e.message,
-          ytProc && ytProc.ytErr ? `| yt-dlp: ${ytProc.ytErr}` : "",
+          e.ytErr ? `| yt-dlp: ${e.ytErr}` : "",
         );
       setProgress(id, -1);
-      if (!res.headersSent) res.status(500).send("Audio compilation failed.");
+      if (!res.headersSent) res.status(500).send(friendlyError(e, e.ytErr));
       else res.destroy();
     } finally {
-      if (acquired) limiter.release();
-      if (ytProc) ytProc.kill("SIGKILL");
-      await rm(outPath, coverPath, infoFile);
+      await rm(outPath);
       setTimeout(() => lastProgress.delete(id), 60_000).unref();
     }
   });
+
+  // Remove converted files nobody picked up
+  setInterval(async () => {
+    try {
+      for (const f of await fs.promises.readdir(TEMP_DIR)) {
+        const p = path.join(TEMP_DIR, f);
+        const st = await fs.promises.stat(p).catch(() => null);
+        if (st && Date.now() - st.mtimeMs > FILE_TTL + 5 * 60_000) await rm(p);
+      }
+    } catch {}
+  }, 5 * 60_000).unref();
 
   // Progress via Server-Sent Events (works across workers via shared store)
   app.get("/api/progress/:id", (req, res) => {

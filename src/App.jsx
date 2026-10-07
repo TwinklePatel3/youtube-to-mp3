@@ -24,41 +24,12 @@ const EMPTY_SONG = {
 };
 
 const QUALITIES = [
-  {
-    value: "128",
-    title: "128 kbps",
-    note: "Smaller file",
-    badge: "Light",
-  },
-  {
-    value: "320",
-    title: "320 kbps",
-    note: "Higher quality",
-    badge: "Hi-Fi",
-  },
+  { value: "128", title: "128 kbps", note: "Smaller file", badge: "Light" },
+  { value: "320", title: "320 kbps", note: "Higher quality", badge: "Hi-Fi" },
 ];
 
 const STEPS = ["Prepare", "Convert", "Save"];
-const STEP_OF = {
-  preparing: 0,
-  converting: 1,
-  saving: 2,
-};
-
-const FEATURES = [
-  {
-    title: "Cover artwork",
-    text: "Embedded in the MP3",
-  },
-  {
-    title: "Music tags",
-    text: "Artist, album & title",
-  },
-  {
-    title: "Two qualities",
-    text: "128 or 320 kbps",
-  },
-];
+const STEP_OF = { preparing: 0, converting: 1 };
 
 const glass =
   "border border-white/80 bg-white/65 backdrop-blur-2xl shadow-[0_24px_80px_rgba(60,40,120,0.10),inset_0_1px_0_rgba(255,255,255,0.95)]";
@@ -86,27 +57,13 @@ const toSong = (data) => ({
 
 const fmtDuration = (seconds) =>
   seconds
-    ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(
-        2,
-        "0",
-      )}`
+    ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`
     : "";
-
-const fmtMB = (bytes) => (bytes / 1048576).toFixed(1);
-
-const sanitize = (name) =>
-  name
-    .replace(/[\/\\:*?"<>|]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 180);
 
 async function postJson(path, body, signal) {
   const response = await fetch(`${API_URL}${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,
   });
@@ -155,8 +112,8 @@ const PasteIcon = ({ size = 16 }) => (
   </Icon>
 );
 
-const ArrowRightIcon = ({ size = 18 }) => (
-  <Icon size={size}>
+const ArrowRightIcon = ({ size = 18, className = "" }) => (
+  <Icon size={size} className={className}>
     <path d="M5 12h14" />
     <path d="m13 6 6 6-6 6" />
   </Icon>
@@ -191,20 +148,6 @@ const SparkleIcon = ({ size = 16 }) => (
   </Icon>
 );
 
-const ShieldIcon = ({ size = 17 }) => (
-  <Icon size={size}>
-    <path d="M12 3 5 6v5c0 4.4 2.9 8.3 7 10 4.1-1.7 7-5.6 7-10V6l-7-3Z" />
-    <path d="m9 12 2 2 4-4" />
-  </Icon>
-);
-
-const XIcon = ({ size = 16 }) => (
-  <Icon size={size}>
-    <path d="m6 6 12 12" />
-    <path d="m18 6-12 12" />
-  </Icon>
-);
-
 /* -------------------------------------------------------------------------- */
 /* LOGO                                                                         */
 /* -------------------------------------------------------------------------- */
@@ -227,16 +170,13 @@ const Logo = ({ size = 42 }) => (
           <stop offset=".48" stopColor="#ec4899" />
           <stop offset="1" stopColor="#9333ea" />
         </linearGradient>
-
         <linearGradient id="logo-light" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#fff" stopOpacity=".62" />
           <stop offset=".5" stopColor="#fff" stopOpacity=".08" />
           <stop offset="1" stopColor="#fff" stopOpacity="0" />
         </linearGradient>
       </defs>
-
       <rect x="2" y="2" width="60" height="60" rx="17" fill="url(#logo-main)" />
-
       <rect
         x="2"
         y="2"
@@ -245,7 +185,6 @@ const Logo = ({ size = 42 }) => (
         rx="17"
         fill="url(#logo-light)"
       />
-
       <rect
         x="3"
         y="3"
@@ -256,7 +195,6 @@ const Logo = ({ size = 42 }) => (
         stroke="white"
         strokeOpacity=".5"
       />
-
       <path
         d="M27 17v27.5c0 3.8-3.4 6.5-7 6.5-3.3 0-5.5-1.7-5.5-4.3 0-3.1 2.9-5.4 6.8-5.4 1.2 0 2.2.2 3.2.6V20.2l20-4.2v20.5c0 3.8-3.4 6.5-7 6.5-3.3 0-5.5-1.7-5.5-4.3 0-3.1 2.9-5.4 6.8-5.4 1.2 0 2.2.2 3.2.6V22l-15 3.2V17h-5Z"
         fill="white"
@@ -294,7 +232,6 @@ function SongSkeleton() {
     >
       <div className="flex flex-col gap-6 sm:flex-row">
         <div className="mx-auto h-56 w-56 shrink-0 animate-pulse rounded-[26px] bg-slate-200/70 sm:mx-0" />
-
         <div className="flex flex-1 flex-col justify-center space-y-4">
           <div className="h-3 w-24 animate-pulse rounded-full bg-slate-200/70" />
           <div className="h-8 w-4/5 animate-pulse rounded-xl bg-slate-200/70" />
@@ -333,20 +270,16 @@ function QualityCard({ quality, active, busy, onChange }) {
         <div>
           <div className="flex items-center gap-2">
             <span
-              className={`text-base font-black ${
-                active ? "text-pink-600" : "text-slate-800"
-              }`}
+              className={`text-base font-black ${active ? "text-pink-600" : "text-slate-800"}`}
             >
               {quality.title}
             </span>
-
             {active && (
               <span className="rounded-full bg-pink-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-pink-600">
                 Selected
               </span>
             )}
           </div>
-
           <p className="mt-1 text-xs font-medium text-slate-400">
             {quality.note}
           </p>
@@ -367,7 +300,6 @@ function QualityCard({ quality, active, busy, onChange }) {
         <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
           MP3 Audio
         </span>
-
         <span
           className={`rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${
             active ? "bg-white/80 text-pink-500" : "bg-slate-100 text-slate-400"
@@ -401,7 +333,6 @@ function Stepper({ currentStep }) {
               >
                 {complete ? <CheckIcon size={13} /> : index + 1}
               </span>
-
               <span
                 className={`hidden text-[11px] font-bold sm:block ${
                   active
@@ -417,9 +348,7 @@ function Stepper({ currentStep }) {
 
             {index < STEPS.length - 1 && (
               <div
-                className={`mx-2 h-px flex-1 transition-colors ${
-                  index < currentStep ? "bg-emerald-300" : "bg-slate-200"
-                }`}
+                className={`mx-2 h-px flex-1 transition-colors ${index < currentStep ? "bg-emerald-300" : "bg-slate-200"}`}
               />
             )}
           </li>
@@ -435,9 +364,7 @@ function Visualizer({ active = false }) {
       {[0.45, 0.8, 1, 0.65, 0.9, 0.55, 0.75].map((height, index) => (
         <span
           key={index}
-          className={`w-[3px] rounded-full transition-all ${
-            active ? gradient : "bg-slate-300"
-          }`}
+          className={`w-[3px] rounded-full transition-all ${active ? gradient : "bg-slate-300"}`}
           style={{
             height: `${Math.max(6, height * 22)}px`,
             animation: active
@@ -456,7 +383,6 @@ function Visualizer({ active = false }) {
 
 export default function App() {
   const [url, setUrl] = useState("");
-
   const [quality, setQuality] = useState(
     () => localStorage.getItem("quality") || "128",
   );
@@ -466,14 +392,9 @@ export default function App() {
   const [loadingSong, setLoadingSong] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
 
-  const [phase, setPhase] = useState("idle");
+  const [phase, setPhase] = useState("idle"); // idle | preparing | converting
   const [progress, setProgress] = useState(0);
-
-  const [savedBytes, setSavedBytes] = useState({
-    got: 0,
-    total: 0,
-  });
-
+  const [file, setFile] = useState(null); // { url, name } once the MP3 is ready
   const [downloadId, setDownloadId] = useState(null);
   const [done, setDone] = useState(false);
 
@@ -487,41 +408,77 @@ export default function App() {
   }, [quality]);
 
   /* ------------------------------------------------------------------------ */
-  /* SERVER-SENT PROGRESS                                                     */
+  /* DOWNLOAD PROGRESS (polling is more reliable than SSE on iPhone / in-app   */
+  /* browsers such as the Documents app)                                       */
   /* ------------------------------------------------------------------------ */
 
   useEffect(() => {
     if (!downloadId) return;
 
-    const es = new EventSource(`${API_URL}/api/progress/${downloadId}`);
+    let stopped = false;
+    let timer;
+    const startedAt = Date.now();
 
-    es.onmessage = (event) => {
+    const tick = async () => {
       try {
-        const data = JSON.parse(event.data);
-        const currentProgress = Number(data.progress) || 0;
+        const res = await fetch(`${API_URL}/api/status/${downloadId}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (stopped) return;
 
-        if (currentProgress > 0) {
-          setProgress(currentProgress);
-
-          setPhase((current) =>
-            current === "preparing" ? "converting" : current,
-          );
+        if (data.error) {
+          setError(data.message || "Conversion failed. Please try again.");
+          setPhase("idle");
+          setDownloadId(null);
+          return;
         }
 
-        if (currentProgress >= 100 || data.error) {
-          es.close();
+        setProgress(data.progress || 0);
+        if (data.progress > 0) {
+          setPhase((cur) => (cur === "preparing" ? "converting" : cur));
+        }
+
+        if (data.ready) {
+          const fileUrl = `${API_URL}/api/file/${downloadId}`;
+          setFile({ url: fileUrl, name: data.name });
+          setPhase("idle");
+          setDone(true);
+          setDownloadId(null);
+          saveFile(fileUrl); // the "Save MP3" button is the fallback if the browser blocks this
+          return;
         }
       } catch {
-        // Ignore malformed SSE messages.
+        // network hiccup: keep trying
       }
+
+      if (Date.now() - startedAt > 10 * 60 * 1000) {
+        setError("This is taking too long. Please try again.");
+        setPhase("idle");
+        setDownloadId(null);
+        return;
+      }
+      timer = setTimeout(tick, 1000);
     };
 
-    es.onerror = () => {
-      es.close();
-    };
+    tick();
 
-    return () => es.close();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, [downloadId]);
+
+  // Starts the browser's normal download from a real URL (works in Safari and in-app browsers)
+  const saveFile = (fileUrl) => {
+    const a = Object.assign(document.createElement("a"), {
+      href: fileUrl,
+      rel: "noopener",
+    });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
 
   useEffect(() => {
     return () => abortRef.current?.abort();
@@ -542,9 +499,7 @@ export default function App() {
       if (run !== songRun.current) return;
 
       try {
-        const data = await postJson("/api/song-details", {
-          url: videoUrl,
-        });
+        const data = await postJson("/api/song-details", { url: videoUrl });
 
         if (data.ready) {
           setSong(toSong(data));
@@ -584,13 +539,12 @@ export default function App() {
     setLoadingSong(true);
     setLoadingDetails(false);
     setDone(false);
+    setFile(null);
     setProgress(0);
     setSong(EMPTY_SONG);
 
     try {
-      const data = await postJson("/api/song", {
-        url: clean,
-      });
+      const data = await postJson("/api/song", { url: clean });
 
       if (run !== songRun.current) return;
 
@@ -621,6 +575,7 @@ export default function App() {
     setLoadingSong(false);
     setLoadingDetails(false);
     setDone(false);
+    setFile(null);
 
     if (song.title) {
       setSong(EMPTY_SONG);
@@ -664,139 +619,52 @@ export default function App() {
 
   const startDownload = async () => {
     const controller = new AbortController();
-
     abortRef.current = controller;
 
     setError("");
     setDone(false);
+    setFile(null);
     setProgress(0);
-    setSavedBytes({
-      got: 0,
-      total: 0,
-    });
-
     setPhase("preparing");
 
     try {
       const { downloadId: id } = await postJson(
         "/api/download",
-        {
-          url: url.trim(),
-          quality,
-        },
+        { url: url.trim(), quality, delivery: "link" },
         controller.signal,
       );
-
-      setDownloadId(id);
-
-      const response = await fetch(
-        `${API_URL}/api/download-file?id=${encodeURIComponent(id)}`,
-        {
-          signal: controller.signal,
-        },
-      );
-
-      if (!response.ok) {
-        const message = await response.text().catch(() => "");
-
-        throw new Error(
-          response.status === 503
-            ? "The converter is busy right now. Try again in a few seconds."
-            : message ||
-                "Conversion failed. YouTube may be blocking this video. Try again or pick another.",
-        );
-      }
-
-      setPhase("saving");
-      setProgress(100);
-
-      const total = Number(response.headers.get("Content-Length")) || 0;
-
-      const reader = response.body.getReader();
-
-      const chunks = [];
-      let received = 0;
-
-      for (;;) {
-        const { done: finished, value } = await reader.read();
-
-        if (finished) break;
-
-        chunks.push(value);
-
-        received += value.length;
-
-        setSavedBytes({
-          got: received,
-          total,
-        });
-      }
-
-      if (!received) {
-        throw new Error("The MP3 came back empty. Please try again.");
-      }
-
-      const contentDisposition =
-        response.headers.get("Content-Disposition") || "";
-
-      const encodedFilename = contentDisposition.match(
-        /filename\*=UTF-8''([^;]+)/i,
-      );
-
-      const normalFilename = contentDisposition.match(/filename="([^"]+)"/i);
-
-      let fileName;
-
-      if (encodedFilename) {
-        try {
-          fileName = decodeURIComponent(encodedFilename[1]);
-        } catch {
-          fileName = encodedFilename[1];
-        }
-      } else if (normalFilename) {
-        fileName = normalFilename[1];
-      } else {
-        fileName = `${sanitize(
-          song.title || "YouTube Audio",
-        )}-${quality}kbps.mp3`;
-      }
-
-      const blob = new Blob(chunks, {
-        type: "audio/mpeg",
-      });
-
-      const blobUrl = URL.createObjectURL(blob);
-
-      const anchor = Object.assign(document.createElement("a"), {
-        href: blobUrl,
-        download: fileName,
-      });
-
-      document.body.appendChild(anchor);
-
-      anchor.click();
-
-      anchor.remove();
-
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
-
-      setDone(true);
+      setDownloadId(id); // the polling effect takes over from here
     } catch (err) {
       setError(
         err.name === "AbortError"
           ? "Download cancelled."
-          : err.message || "Something went wrong while downloading.",
+          : err.message || "Couldn't start the download. Please try again.",
       );
-    } finally {
       setPhase("idle");
-      setDownloadId(null);
+    } finally {
       abortRef.current = null;
     }
   };
 
-  const reset = () => {
+  const cancelDownload = () => {
     abortRef.current?.abort();
 
+    if (downloadId) {
+      fetch(`${API_URL}/api/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: downloadId }),
+      }).catch(() => {});
+    }
+
+    setDownloadId(null);
+    setPhase("idle");
+    setProgress(0);
+    setError("Download cancelled.");
+  };
+
+  const reset = () => {
+    cancelDownload();
     songRun.current++;
 
     setUrl("");
@@ -804,156 +672,81 @@ export default function App() {
     setError("");
     setProgress(0);
     setDone(false);
+    setFile(null);
     setLoadingSong(false);
     setLoadingDetails(false);
-    setPhase("idle");
-    setSavedBytes({
-      got: 0,
-      total: 0,
-    });
   };
 
   /* ------------------------------------------------------------------------ */
   /* DISPLAY VALUES                                                            */
   /* ------------------------------------------------------------------------ */
 
-  const meta = [song.album, song.year, fmtDuration(song.duration)]
-    .filter(Boolean)
-    .join(" · ");
-
   const step = STEP_OF[phase] ?? 0;
 
-  const barPct =
-    phase === "saving" && savedBytes.total
-      ? (savedBytes.got / savedBytes.total) * 100
-      : phase === "saving"
-        ? 100
-        : progress;
-
-  const safeBarPct = Math.min(Math.max(barPct || 0, 0), 100);
+  const safeBarPct = Math.min(Math.max(progress || 0, 0), 100);
 
   const statusText = {
     preparing:
       "Contacting YouTube. The first request can take a little longer.",
     converting: "Converting your audio and adding artwork & tags.",
-    saving: savedBytes.total
-      ? `Receiving file · ${fmtMB(savedBytes.got)} of ${fmtMB(savedBytes.total)} MB`
-      : "Preparing your MP3 for download…",
   }[phase];
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-[#f7f7fb] text-slate-900 antialiased">
       <style>{`
         @keyframes drift {
-          0%, 100% {
-            transform: translate3d(0, 0, 0) scale(1);
-          }
-          50% {
-            transform: translate3d(35px, 25px, 0) scale(1.1);
-          }
+          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+          50% { transform: translate3d(35px, 25px, 0) scale(1.1); }
         }
-
         @keyframes rise {
-          from {
-            opacity: 0;
-            transform: translateY(12px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(12px); }
+          to { opacity: 1; transform: translateY(0); }
         }
-
         @keyframes shimmer {
-          from {
-            background-position: 200% 0;
-          }
-          to {
-            background-position: -200% 0;
-          }
+          from { background-position: 200% 0; }
+          to { background-position: -200% 0; }
         }
-
         @keyframes musicBar {
-          from {
-            transform: scaleY(.45);
-          }
-          to {
-            transform: scaleY(1);
-          }
+          from { transform: scaleY(.45); }
+          to { transform: scaleY(1); }
         }
-
         @keyframes pulseGlow {
-          0%, 100% {
-            box-shadow: 0 0 0 0 rgba(236,72,153,.08);
-          }
-          50% {
-            box-shadow: 0 0 0 8px rgba(236,72,153,.03);
-          }
+          0%, 100% { box-shadow: 0 0 0 0 rgba(236,72,153,.08); }
+          50% { box-shadow: 0 0 0 8px rgba(236,72,153,.03); }
         }
-
-        .rise {
-          animation: rise .55s cubic-bezier(.2,.8,.2,1) both;
-        }
-
-        .shimmer {
-          background-size: 200% 100%;
-          animation: shimmer 2.2s linear infinite;
-        }
-
-        .pulse-glow {
-          animation: pulseGlow 2s ease-in-out infinite;
-        }
-
+        .rise { animation: rise .55s cubic-bezier(.2,.8,.2,1) both; }
+        .shimmer { background-size: 200% 100%; animation: shimmer 2.2s linear infinite; }
+        .pulse-glow { animation: pulseGlow 2s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
-          .rise,
-          .shimmer,
-          .pulse-glow,
-          .drift {
-            animation: none !important;
-          }
+          .rise, .shimmer, .pulse-glow, .drift { animation: none !important; }
         }
       `}</style>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* BACKGROUND                                                          */}
-      {/* ------------------------------------------------------------------ */}
+      {/* BACKGROUND */}
 
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div
           className="absolute -left-44 -top-48 h-[600px] w-[600px] rounded-full bg-red-300/30 blur-[145px]"
-          style={{
-            animation: "drift 18s ease-in-out infinite",
-          }}
+          style={{ animation: "drift 18s ease-in-out infinite" }}
         />
-
         <div
           className="absolute -right-48 top-10 h-[620px] w-[620px] rounded-full bg-purple-300/30 blur-[155px]"
-          style={{
-            animation: "drift 22s ease-in-out infinite reverse",
-          }}
+          style={{ animation: "drift 22s ease-in-out infinite reverse" }}
         />
-
         <div
           className="absolute -bottom-60 left-[30%] h-[520px] w-[520px] rounded-full bg-pink-300/25 blur-[155px]"
-          style={{
-            animation: "drift 25s ease-in-out infinite",
-          }}
+          style={{ animation: "drift 25s ease-in-out infinite" }}
         />
-
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,transparent_35%,#f7f7fb_100%)]" />
-
         <div className="absolute inset-0 opacity-[0.035] [background-image:linear-gradient(#64748b_1px,transparent_1px),linear-gradient(90deg,#64748b_1px,transparent_1px)] [background-size:56px_56px]" />
       </div>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* HEADER                                                              */}
-      {/* ------------------------------------------------------------------ */}
+      {/* HEADER */}
 
       <header className="sticky top-0 z-30 border-b border-white/70 bg-white/55 backdrop-blur-2xl">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3.5">
           <div className="flex items-center gap-3">
             <Logo />
-
             <div>
               <div className="text-[15px] font-black tracking-tight sm:text-lg">
                 YouTube
@@ -961,7 +754,6 @@ export default function App() {
                   Audio
                 </span>
               </div>
-
               <div className="hidden text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400 sm:block">
                 Simple · Fast · Beautiful
               </div>
@@ -975,9 +767,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* ------------------------------------------------------------------ */}
-      {/* MAIN                                                                */}
-      {/* ------------------------------------------------------------------ */}
+      {/* MAIN */}
 
       <main className="mx-auto max-w-5xl px-5 pb-24">
         {/* HERO */}
@@ -1004,9 +794,7 @@ export default function App() {
           </p>
         </section>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* URL INPUT                                                         */}
-        {/* ---------------------------------------------------------------- */}
+        {/* URL INPUT */}
 
         <section className="rise mx-auto mt-10 max-w-3xl [animation-delay:80ms]">
           <div
@@ -1106,9 +894,7 @@ export default function App() {
 
         {loadingSong && !song.title && <SongSkeleton />}
 
-        {/* ---------------------------------------------------------------- */}
-        {/* SONG CARD                                                         */}
-        {/* ---------------------------------------------------------------- */}
+        {/* SONG CARD */}
 
         {song.title && (
           <section
@@ -1124,7 +910,6 @@ export default function App() {
                   aria-hidden="true"
                   className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-[0.13] blur-3xl"
                 />
-
                 <div className="pointer-events-none absolute inset-0 bg-white/60" />
               </>
             )}
@@ -1195,13 +980,11 @@ export default function App() {
                           {song.album}
                         </span>
                       )}
-
                       {song.year && (
                         <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
                           {song.year}
                         </span>
                       )}
-
                       {song.duration > 0 && (
                         <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
                           {fmtDuration(song.duration)}
@@ -1233,7 +1016,6 @@ export default function App() {
                     <legend className="text-sm font-black text-slate-800">
                       Audio quality
                     </legend>
-
                     <p className="mt-1 text-[11px] font-medium text-slate-400">
                       Choose the balance between size and quality.
                     </p>
@@ -1257,9 +1039,7 @@ export default function App() {
                 </div>
               </fieldset>
 
-              {/* ---------------------------------------------------------------- */}
-              {/* PROGRESS                                                           */}
-              {/* ---------------------------------------------------------------- */}
+              {/* PROGRESS */}
 
               {busy && (
                 <div
@@ -1271,26 +1051,12 @@ export default function App() {
                   <div className="mt-5">
                     <div className="mb-2 flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span
-                          className={`flex h-7 w-7 items-center justify-center rounded-full ${
-                            phase === "saving"
-                              ? "bg-emerald-100 text-emerald-600"
-                              : "bg-pink-100 text-pink-500"
-                          }`}
-                        >
-                          {phase === "saving" ? (
-                            <CheckIcon size={14} />
-                          ) : (
-                            <Spinner className="h-3.5 w-3.5" />
-                          )}
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-pink-100 text-pink-500">
+                          <Spinner className="h-3.5 w-3.5" />
                         </span>
 
                         <span className="text-xs font-black text-slate-700">
-                          {phase === "preparing"
-                            ? "Preparing"
-                            : phase === "converting"
-                              ? "Converting"
-                              : "Saving"}
+                          {phase === "preparing" ? "Preparing" : "Converting"}
                         </span>
                       </div>
 
@@ -1319,9 +1085,7 @@ export default function App() {
                       ) : (
                         <div
                           className="shimmer h-full rounded-full bg-gradient-to-r from-red-500 via-pink-400 to-purple-500 transition-all duration-500"
-                          style={{
-                            width: `${safeBarPct}%`,
-                          }}
+                          style={{ width: `${safeBarPct}%` }}
                         />
                       )}
                     </div>
@@ -1332,7 +1096,7 @@ export default function App() {
                       </p>
 
                       <button
-                        onClick={() => abortRef.current?.abort()}
+                        onClick={cancelDownload}
                         className="shrink-0 rounded-full border border-white bg-white/70 px-3 py-1.5 text-[10px] font-black text-slate-500 transition hover:border-red-200 hover:text-red-500"
                       >
                         Cancel
@@ -1342,9 +1106,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* ---------------------------------------------------------------- */}
-              {/* DOWNLOAD BUTTON                                                   */}
-              {/* ---------------------------------------------------------------- */}
+              {/* DOWNLOAD BUTTON */}
 
               {!busy && !done && (
                 <button
@@ -1366,11 +1128,9 @@ export default function App() {
                 </button>
               )}
 
-              {/* ---------------------------------------------------------------- */}
-              {/* DONE                                                              */}
-              {/* ---------------------------------------------------------------- */}
+              {/* DONE */}
 
-              {done && !busy && (
+              {done && !busy && file && (
                 <div className="relative mt-5">
                   <div className="overflow-hidden rounded-[24px] border border-emerald-100 bg-gradient-to-br from-emerald-50/90 via-white/70 to-teal-50/70 p-5 text-center">
                     <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/20">
@@ -1382,44 +1142,39 @@ export default function App() {
                     </p>
 
                     <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-emerald-600/75">
-                      The download has been sent to your browser. Check your
-                      Downloads folder if you don't see it immediately.
+                      If the download didn't start, tap Save MP3. On iPhone or
+                      iPad, choose Download, or Share then Save to Files.
                     </p>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <button
-                      onClick={startDownload}
-                      className="rounded-[17px] border border-white bg-white/70 py-3.5 text-sm font-black text-slate-700 shadow-sm transition hover:bg-white hover:shadow-md"
-                    >
-                      Download again
-                    </button>
+                  <a
+                    href={file.url}
+                    className={`mt-3 flex h-[58px] w-full items-center justify-center gap-2 rounded-[20px] ${gradient} font-black text-white shadow-[0_18px_40px_rgba(236,72,153,0.25)] transition hover:brightness-110`}
+                  >
+                    <DownloadIcon size={19} />
+                    Save MP3
+                  </a>
 
-                    <button
-                      onClick={reset}
-                      className="rounded-[17px] bg-slate-900 py-3.5 text-sm font-black text-white shadow-lg shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-slate-800"
-                    >
-                      Convert another
-                    </button>
-                  </div>
+                  <button
+                    onClick={reset}
+                    className="mt-3 w-full rounded-[17px] bg-slate-900 py-3.5 text-sm font-black text-white shadow-lg shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-slate-800"
+                  >
+                    Convert another
+                  </button>
                 </div>
               )}
             </div>
           </section>
         )}
 
-        {/* ------------------------------------------------------------------ */}
-        {/* TRUST / FOOTER                                                    */}
-        {/* ------------------------------------------------------------------ */}
+        {/* FOOTER */}
 
         <div className="mx-auto mt-10 flex max-w-3xl flex-col items-center justify-center gap-3 text-center sm:flex-row">
           <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
             <span className="h-px w-8 bg-slate-200" />
-
             <span className="font-medium tracking-wide">
               Made for your music library
             </span>
-
             <span className="h-px w-8 bg-slate-200" />
           </div>
         </div>
