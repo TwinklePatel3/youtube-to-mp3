@@ -20,12 +20,22 @@ const EMPTY_SONG = {
   album: "",
   year: "",
   composer: "",
+  genre: "",
   duration: 0,
 };
 
 const QUALITIES = [
   { value: "128", title: "128 kbps", note: "Smaller file", badge: "Light" },
   { value: "320", title: "320 kbps", note: "Higher quality", badge: "Hi-Fi" },
+];
+
+const TAG_FIELDS = [
+  { key: "title", label: "Title", wide: true },
+  { key: "artist", label: "Artist(s)", wide: true },
+  { key: "album", label: "Album / movie" },
+  { key: "year", label: "Year" },
+  { key: "genre", label: "Genre" },
+  { key: "composer", label: "Composer" },
 ];
 
 const STEPS = ["Prepare", "Convert", "Save"];
@@ -52,6 +62,7 @@ const toSong = (data) => ({
   album: data.album || "",
   year: data.releaseYear || "",
   composer: data.composer || "",
+  genre: data.genre || "",
   duration: Number(data.duration) || 0,
 });
 
@@ -397,6 +408,8 @@ export default function App() {
   const [file, setFile] = useState(null); // { url, name } once the MP3 is ready
   const [downloadId, setDownloadId] = useState(null);
   const [done, setDone] = useState(false);
+  const [edits, setEdits] = useState({}); // tags the user changed
+  const [editing, setEditing] = useState(false);
 
   const songRun = useRef(0);
   const abortRef = useRef(null);
@@ -406,6 +419,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("quality", quality);
   }, [quality]);
+
+  // a new / cleared song starts without edits
+  useEffect(() => {
+    if (!song.title) {
+      setEdits({});
+      setEditing(false);
+    }
+  }, [song.title]);
 
   /* ------------------------------------------------------------------------ */
   /* DOWNLOAD PROGRESS (polling is more reliable than SSE on iPhone / in-app   */
@@ -627,10 +648,16 @@ export default function App() {
     setProgress(0);
     setPhase("preparing");
 
+    const tags = {};
+    for (const [key, value] of Object.entries(edits)) {
+      const text = String(value || "").trim();
+      if (text && text !== song[key]) tags[key] = text;
+    }
+
     try {
       const { downloadId: id } = await postJson(
         "/api/download",
-        { url: url.trim(), quality, delivery: "link" },
+        { url: url.trim(), quality, delivery: "link", tags },
         controller.signal,
       );
       setDownloadId(id); // the polling effect takes over from here
@@ -680,6 +707,11 @@ export default function App() {
   /* ------------------------------------------------------------------------ */
   /* DISPLAY VALUES                                                            */
   /* ------------------------------------------------------------------------ */
+
+  const view = { ...song };
+  for (const [key, value] of Object.entries(edits)) {
+    if (String(value || "").trim()) view[key] = String(value).trim();
+  }
 
   const step = STEP_OF[phase] ?? 0;
 
@@ -961,11 +993,11 @@ export default function App() {
                   </div>
 
                   <h2 className="line-clamp-3 text-[25px] font-black leading-[1.08] tracking-[-0.035em] text-slate-900 sm:text-3xl">
-                    {song.title}
+                    {view.title}
                   </h2>
 
                   <p className="mt-2 text-base font-bold text-slate-600">
-                    {song.artist || "Unknown artist"}
+                    {view.artist || "Unknown artist"}
                   </p>
 
                   {loadingDetails ? (
@@ -975,14 +1007,14 @@ export default function App() {
                     </p>
                   ) : (
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {song.album && (
+                      {view.album && (
                         <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
-                          {song.album}
+                          {view.album}
                         </span>
                       )}
-                      {song.year && (
+                      {view.year && (
                         <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
-                          {song.year}
+                          {view.year}
                         </span>
                       )}
                       {song.duration > 0 && (
@@ -993,20 +1025,82 @@ export default function App() {
                     </div>
                   )}
 
-                  {song.composer && (
+                  {view.composer && (
                     <p className="mt-3 text-xs font-medium text-slate-400">
                       Music by{" "}
                       <span className="font-bold text-slate-500">
-                        {song.composer}
+                        {view.composer}
                       </span>
                     </p>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => setEditing((v) => !v)}
+                    disabled={busy}
+                    className="mt-4 self-start rounded-full border border-white bg-white/70 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-slate-500 shadow-sm transition hover:border-pink-200 hover:text-pink-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {editing ? "Done editing" : "Edit tags"}
+                  </button>
                 </div>
               </div>
 
               {/* DIVIDER */}
 
               <div className="my-6 h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
+
+              {/* TAG EDITOR */}
+
+              {editing && (
+                <div className="mb-6 rounded-[22px] border border-white/80 bg-white/55 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <p className="text-sm font-black text-slate-800">
+                      Edit tags
+                    </p>
+                    {Object.keys(edits).length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setEdits({})}
+                        disabled={busy}
+                        className="text-[11px] font-black text-pink-500 underline underline-offset-2"
+                      >
+                        Reset to detected
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {TAG_FIELDS.map((field) => (
+                      <label
+                        key={field.key}
+                        className={field.wide ? "sm:col-span-2" : ""}
+                      >
+                        <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          {field.label}
+                        </span>
+                        <input
+                          value={edits[field.key] ?? song[field.key] ?? ""}
+                          onChange={(event) =>
+                            setEdits((cur) => ({
+                              ...cur,
+                              [field.key]: event.target.value,
+                            }))
+                          }
+                          disabled={busy}
+                          maxLength={field.key === "year" ? 4 : 150}
+                          inputMode={field.key === "year" ? "numeric" : "text"}
+                          className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
+                        />
+                      </label>
+                    ))}
+                  </div>
+
+                  <p className="mt-3 text-[11px] font-medium text-slate-400">
+                    These values are written into the MP3. Leave a field empty
+                    to keep the detected value.
+                  </p>
+                </div>
+              )}
 
               {/* QUALITY */}
 

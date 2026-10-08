@@ -1111,8 +1111,25 @@ function startWorker() {
     return "Conversion failed. Please try again.";
   };
 
+  // Tags edited by the user on the page: only known fields, trimmed, length-limited. Empty = keep detected.
+  const TAG_KEYS = ["title", "artist", "album", "year", "genre", "composer"];
+  function sanitizeOverrides(input) {
+    const out = {};
+    if (!input || typeof input !== "object") return out;
+    for (const key of TAG_KEYS) {
+      let v = String(input[key] ?? "")
+        .replace(/[\u0000-\u001f\u007f]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 150);
+      if (key === "year" && !/^\d{4}$/.test(v)) v = "";
+      if (v) out[key] = v;
+    }
+    return out;
+  }
+
   /** Downloads the audio, converts it to a tagged MP3 and returns { outPath, downloadName }. */
-  async function convertJob({ id, videoId, url, quality, ctl }) {
+  async function convertJob({ id, videoId, url, quality, overrides, ctl }) {
     const outPath = path.join(TEMP_DIR, `${id}.mp3`);
     const coverPath = path.join(TEMP_DIR, `${id}.jpg`);
     const infoPath = path.join(TEMP_DIR, `${id}.info.json`);
@@ -1130,15 +1147,16 @@ function startWorker() {
 
       const info = await started.infoReady; // arrives just before audio starts flowing
       if (ctl.aborted) throw new Error("Cancelled");
-      const meta = await enrichWithItunes(
+      const detected = await enrichWithItunes(
         videoId,
         buildMeta(info, await oembedP),
       );
+      const meta = { ...detected, ...(overrides || {}) }; // the user's edits win
       if (!info)
         console.warn(
           `[${process.pid}] ${id}: no yt-dlp info JSON, using oEmbed tags only`,
         );
-      cacheMeta(videoId, meta);
+      cacheMeta(videoId, detected); // cache what was detected, not one person's edits
       const downloadName = `${safeFileName(meta.title)} [${quality}kbps].mp3`;
       const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
       if (ctl.aborted) throw new Error("Cancelled");
@@ -1338,7 +1356,12 @@ function startWorker() {
         activeJobs.set(downloadId, ctl);
         runLinkJob(
           downloadId,
-          { videoId: parsed.id, url: parsed.url, quality },
+          {
+            videoId: parsed.id,
+            url: parsed.url,
+            quality,
+            overrides: sanitizeOverrides(req.body?.tags),
+          },
           ctl,
         ); // runs in the background
         return res.json({ success: true, downloadId, delivery: "link" });
