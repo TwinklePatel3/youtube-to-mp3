@@ -1134,7 +1134,76 @@ function startWorker() {
       );
   })();
 
-  app.get("/health", (req, res) =>
+  // ---- does YouTube accept this server right now? ------------------------------------
+  // Runs yt-dlp once against a public video (no download) and reports ok / blocked / error in /health,
+  // so a cookie or proxy change can be verified in seconds. Disable with YT_SELFTEST=0.
+  const SELFTEST_VIDEO = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
+  let youtubeCheck = {
+    status: process.env.YT_SELFTEST === "0" ? "disabled" : "pending",
+  };
+
+  function checkYoutube() {
+    if (process.env.YT_SELFTEST === "0" || youtubeCheck.status === "checking")
+      return;
+    youtubeCheck = { status: "checking", startedAt: new Date().toISOString() };
+    const started = Date.now();
+    const child = spawn(
+      YT_DLP_PATH,
+      [
+        ...ytDlpBaseArgs(),
+        "--simulate",
+        "--ignore-no-formats-error",
+        "--print",
+        "%(id)s",
+        SELFTEST_VIDEO,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    const timer = setTimeout(() => child.kill("SIGKILL"), 90_000);
+    const finish = (status, detail) => {
+      clearTimeout(timer);
+      youtubeCheck = {
+        status,
+        detail,
+        seconds: Math.round((Date.now() - started) / 1000),
+        checkedAt: new Date().toISOString(),
+      };
+      console.log(
+        `[${process.pid}] YOUTUBE CHECK:`,
+        JSON.stringify(youtubeCheck),
+      );
+    };
+    child.on("error", (e) => finish("error", e.message));
+    child.on("close", (code, signal) => {
+      if (code === 0 && /jNQXAC9IVRw/.test(out)) {
+        return finish("ok", "YouTube accepted this server.");
+      }
+      if (/sign in to confirm|not a bot/i.test(out)) {
+        const hint = cookieInfo.loaded
+          ? "YouTube blocked the request even with cookies: they are probably expired, or this server's IP is blocked. Re-export fresh cookies from a private window, or use YT_PROXY."
+          : "YouTube blocked the request and no cookies are loaded. Add cookies (YT_COOKIES_B64 or a secret file) or use YT_PROXY.";
+        return finish("blocked", hint);
+      }
+      finish(
+        "error",
+        signal
+          ? "Timed out after 90 s."
+          : out.trim().split("\n").pop().slice(0, 200),
+      );
+    });
+  }
+  setTimeout(checkYoutube, 3000); // after startup, so it doesn't slow the first requests
+
+  let lastRecheck = 0;
+  app.get("/health", (req, res) => {
+    // /health?recheck=1 re-runs the YouTube test (at most once a minute)
+    if (req.query.recheck && Date.now() - lastRecheck > 60_000) {
+      lastRecheck = Date.now();
+      checkYoutube();
+    }
     res.json({
       ok: true,
       pid: process.pid,
@@ -1143,8 +1212,9 @@ function startWorker() {
       workers: WORKERS,
       allowedOrigins: ALLOW_ALL_ORIGINS ? "*" : ALLOWED_ORIGINS,
       tools: toolStatus,
-    }),
-  );
+      youtube: youtubeCheck,
+    });
+  });
 
   // Metadata only (for preview)
   // Instant preview (oEmbed) - full details are fetched in the background
