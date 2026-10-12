@@ -669,6 +669,7 @@ function startWorker() {
     composer: m.composer || "",
     genre: m.genre || "",
     verified: !!m.verified,
+    appleCover: m.appleCover || "",
     detailsReady,
   });
 
@@ -819,6 +820,7 @@ function startWorker() {
       genre: t.primaryGenreName || "",
       trackNumber: t.trackNumber || 0,
       trackCount: t.trackCount || 0,
+      appleCover: hiResArt(t.artworkUrl100),
       squareCover: hiResArt(t.artworkUrl100) || meta.squareCover,
       verified: true,
     };
@@ -853,13 +855,79 @@ function startWorker() {
     return r.ok ? Buffer.from(await r.arrayBuffer()) : null;
   }
 
+  /** Renders any image as an Apple Music-friendly cover: square, sRGB, baseline JPEG, no alpha, no EXIF/ICC. */
+  // Shorts / letterboxed thumbnails come with black bars: cut them off when a clear picture remains
+  async function trimBars(input) {
+    try {
+      const before = await sharp(input).metadata();
+      const { data, info } = await sharp(input)
+        .trim({ threshold: 12 })
+        .toBuffer({ resolveWithObject: true });
+      const smaller = info.width < before.width || info.height < before.height;
+      if (
+        smaller &&
+        info.width >= before.width * 0.3 &&
+        info.height >= before.height * 0.3
+      )
+        return data;
+    } catch {
+      // keep the original image
+    }
+    return input;
+  }
+
+  async function renderCover(input, outPath, isSquare, trim = false) {
+    if (trim) input = await trimBars(input);
+    let img;
+    if (isSquare || COVER_MODE === "crop") {
+      img = sharp(input).resize(COVER_SIZE, COVER_SIZE, {
+        fit: "cover",
+        position: "centre",
+      });
+    } else {
+      // keep the whole frame, fill the rest with a blurred, darkened copy
+      const bg = await sharp(input)
+        .resize(COVER_SIZE, COVER_SIZE, { fit: "cover" })
+        .blur(40)
+        .modulate({ brightness: 0.7 })
+        .toBuffer();
+      const fg = await sharp(input)
+        .resize(COVER_SIZE, COVER_SIZE, { fit: "inside" })
+        .toBuffer();
+      img = sharp(bg).composite([{ input: fg, gravity: "centre" }]);
+    }
+    await img
+      .flatten({ background: "#000000" }) // no transparency
+      .toColorspace("srgb") // never CMYK / grayscale
+      .jpeg({ quality: 92, progressive: false, chromaSubsampling: "4:2:0" }) // baseline JPEG
+      .toFile(outPath); // metadata (EXIF/ICC) is stripped by default
+  }
+
   /**
-   * Builds an Apple Music-friendly cover: square, sRGB, baseline JPEG, no alpha,
-   * no EXIF/ICC extras. Prefers YouTube's real square album art when available.
+   * Picks and renders the cover. opts.source: "auto" (best available), "apple", "youtube" (video
+   * thumbnail) or "custom" (an uploaded image). A failed choice falls back to the automatic order.
    */
-  async function prepareCover(videoId, outPath, squareUrl) {
+  async function prepareCover(videoId, outPath, squareUrl, opts = {}) {
+    const source = opts.source || "auto";
+
+    if (source === "custom" && opts.customPath) {
+      try {
+        await renderCover(
+          await fs.promises.readFile(opts.customPath),
+          outPath,
+          false,
+        );
+        return true;
+      } catch (e) {
+        console.error("Custom cover failed:", e.message);
+      }
+    }
+
     const sources = [];
-    if (squareUrl) sources.push({ url: squareUrl, square: true });
+    if (source === "apple" && opts.appleUrl)
+      sources.push({ url: opts.appleUrl, square: true });
+    if (source !== "youtube" && squareUrl)
+      sources.push({ url: squareUrl, square: true });
     for (const n of ["maxresdefault", "sddefault", "hqdefault"]) {
       sources.push({
         url: `https://i.ytimg.com/vi/${videoId}/${n}.jpg`,
@@ -871,32 +939,7 @@ function startWorker() {
       try {
         const input = await fetchImage(src.url);
         if (!input) continue;
-
-        let img;
-        if (src.square || COVER_MODE === "crop") {
-          img = sharp(input).resize(COVER_SIZE, COVER_SIZE, {
-            fit: "cover",
-            position: "centre",
-          });
-        } else {
-          // keep the whole frame, fill the rest with a blurred, darkened copy
-          const bg = await sharp(input)
-            .resize(COVER_SIZE, COVER_SIZE, { fit: "cover" })
-            .blur(40)
-            .modulate({ brightness: 0.7 })
-            .toBuffer();
-          const fg = await sharp(input)
-            .resize(COVER_SIZE, COVER_SIZE, { fit: "inside" })
-            .toBuffer();
-          img = sharp(bg).composite([{ input: fg, gravity: "centre" }]);
-        }
-
-        await img
-          .flatten({ background: "#000000" }) // no transparency
-          .toColorspace("srgb") // never CMYK / grayscale
-          .jpeg({ quality: 92, progressive: false, chromaSubsampling: "4:2:0" }) // baseline JPEG
-          .toFile(outPath); // metadata (EXIF/ICC) is stripped by default
-
+        await renderCover(input, outPath, src.square, !src.square); // trim bars from video thumbnails
         return true;
       } catch (e) {
         console.error("Cover failed:", src.url, e.message);
@@ -982,6 +1025,7 @@ function startWorker() {
   // ---- express app -------------------------------------------------------------
   const app = express();
   app.disable("x-powered-by");
+  app.set("trust proxy", 1);
   app.use(
     cors({
       origin: ALLOW_ALL_ORIGINS ? true : ALLOWED_ORIGINS,
@@ -1054,7 +1098,7 @@ function startWorker() {
         m = await enrichWithItunes(parsed.id, buildMeta(null, o));
         startMetaFetch(parsed.id, parsed.url);
       }
-      res.json(publicMeta(m, detailsReady));
+      res.json({ ...publicMeta(m, detailsReady), videoId: parsed.id });
     } catch (e) {
       console.error("SONG METADATA ERROR:", e.message);
       res.status(500).json({ error: "Could not retrieve video information" });
@@ -1067,7 +1111,12 @@ function startWorker() {
     if (!parsed)
       return res.status(400).json({ error: "A valid YouTube URL is required" });
     const m = await getCachedMeta(parsed.id);
-    if (m) return res.json({ ready: true, ...publicMeta(m, true) });
+    if (m)
+      return res.json({
+        ready: true,
+        ...publicMeta(m, true),
+        videoId: parsed.id,
+      });
     const failed = !!(await store.get(`metafail:${parsed.id}`));
     if (!failed) startMetaFetch(parsed.id, parsed.url); // no-op if already running
     res.json({ ready: false, failed });
@@ -1129,7 +1178,47 @@ function startWorker() {
   }
 
   /** Downloads the audio, converts it to a tagged MP3 and returns { outPath, downloadName }. */
-  async function convertJob({ id, videoId, url, quality, overrides, ctl }) {
+  function sanitizeCover(input) {
+    const source = ["auto", "apple", "youtube", "custom"].includes(
+      input?.source,
+    )
+      ? input.source
+      : "auto";
+    const coverId = UUID_RE.test(String(input?.coverId || ""))
+      ? String(input.coverId)
+      : "";
+    return {
+      source: source === "custom" && !coverId ? "auto" : source,
+      coverId,
+    };
+  }
+
+  function sanitizeAudio(input) {
+    const out = { normalize: false, trimStart: 0, trimEnd: 0 };
+    if (!input || typeof input !== "object") return out;
+    out.normalize = input.normalize === true;
+    const secs = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 0 && n <= 6 * 3600
+        ? Math.round(n * 10) / 10
+        : 0;
+    };
+    out.trimStart = secs(input.trimStart);
+    out.trimEnd = secs(input.trimEnd);
+    if (out.trimEnd && out.trimEnd <= out.trimStart + 1) out.trimEnd = 0; // end must be after start
+    return out;
+  }
+
+  async function convertJob({
+    id,
+    videoId,
+    url,
+    quality,
+    overrides,
+    cover,
+    audio,
+    ctl,
+  }) {
     const outPath = path.join(TEMP_DIR, `${id}.mp3`);
     const coverPath = path.join(TEMP_DIR, `${id}.jpg`);
     const infoPath = path.join(TEMP_DIR, `${id}.info.json`);
@@ -1158,7 +1247,45 @@ function startWorker() {
         );
       cacheMeta(videoId, detected); // cache what was detected, not one person's edits
       const downloadName = `${safeFileName(meta.title)} [${quality}kbps].mp3`;
-      const hasCover = await prepareCover(videoId, coverPath, meta.squareCover);
+      const coverChoice = cover || { source: "auto", coverId: "" };
+      const hasCover = await prepareCover(
+        videoId,
+        coverPath,
+        meta.squareCover,
+        {
+          source: coverChoice.source,
+          appleUrl: meta.appleCover,
+          customPath: coverChoice.coverId
+            ? path.join(TEMP_DIR, `cover-${coverChoice.coverId}.jpg`)
+            : "",
+        },
+      );
+
+      // audio options: trim + loudness normalization (applied to the audio stream only)
+      const opts = {
+        normalize: false,
+        trimStart: 0,
+        trimEnd: 0,
+        ...(audio || {}),
+      };
+      if (meta.duration > 0 && opts.trimStart >= meta.duration - 1)
+        opts.trimStart = 0; // start past the end: ignore
+      const filters = [];
+      if (opts.trimStart > 0 || opts.trimEnd > 0) {
+        const parts = [];
+        if (opts.trimStart > 0) parts.push(`start=${opts.trimStart}`);
+        if (opts.trimEnd > 0) parts.push(`end=${opts.trimEnd}`);
+        filters.push(`atrim=${parts.join(":")}`, "asetpts=PTS-STARTPTS");
+      }
+      if (opts.normalize) filters.push("loudnorm=I=-16:TP=-1.5:LRA=11");
+      const endAt =
+        opts.trimEnd > 0
+          ? meta.duration > 0
+            ? Math.min(opts.trimEnd, meta.duration)
+            : opts.trimEnd
+          : meta.duration;
+      const outLength =
+        endAt > 0 ? Math.max(endAt - (opts.trimStart || 0), 1) : 0; // for the progress bar
       if (ctl.aborted) throw new Error("Cancelled");
 
       console.log(
@@ -1185,6 +1312,8 @@ function startWorker() {
         args.push("-map", "0:a:0");
         if (hasCover) args.push("-map", "1:v:0");
 
+        if (filters.length) args.push("-af", filters.join(","));
+        if (opts.normalize) args.push("-ar", "44100"); // loudnorm upsamples internally; MP3 needs a normal rate
         args.push(
           "-c:a",
           "libmp3lame",
@@ -1257,8 +1386,8 @@ function startWorker() {
             const secs = Number(m[1]) / 1e6;
             if (secs <= 0) continue;
             const pct =
-              meta.duration > 0
-                ? (secs / meta.duration) * 100
+              outLength > 0
+                ? (secs / outLength) * 100
                 : 99 * (1 - Math.exp(-secs / 180));
             setProgress(id, Math.min(Math.max(Math.round(pct), 0), 99));
           }
@@ -1328,6 +1457,65 @@ function startWorker() {
     }
   }
 
+  // Custom cover upload: the image is validated, converted to an Apple Music-friendly JPEG and kept briefly
+  const uploadHits = new Map();
+  const tooMany = (key, max, windowMs) => {
+    const now = Date.now();
+    if (uploadHits.size > 5000) uploadHits.clear();
+    const recent = (uploadHits.get(key) || []).filter(
+      (t) => now - t < windowMs,
+    );
+    recent.push(now);
+    uploadHits.set(key, recent);
+    return recent.length > max;
+  };
+
+  app.post(
+    "/api/cover",
+    express.raw({
+      type: ["image/jpeg", "image/png", "image/webp"],
+      limit: "6mb",
+    }),
+    async (req, res) => {
+      if (tooMany(`cover:${req.ip}`, 20, 10 * 60_000)) {
+        return res
+          .status(429)
+          .json({ error: "Too many uploads. Please wait a few minutes." });
+      }
+      if (!Buffer.isBuffer(req.body) || !req.body.length) {
+        return res
+          .status(415)
+          .json({ error: "Upload a JPG, PNG or WebP image (max 6 MB)." });
+      }
+      try {
+        const m = await sharp(req.body).metadata();
+        if (
+          !["jpeg", "png", "webp"].includes(m.format) ||
+          !m.width ||
+          !m.height ||
+          Math.min(m.width, m.height) < 200
+        ) {
+          return res
+            .status(400)
+            .json({
+              error: "The image must be a JPG, PNG or WebP of at least 200 px.",
+            });
+        }
+        const coverId = crypto.randomUUID();
+        await renderCover(
+          req.body,
+          path.join(TEMP_DIR, `cover-${coverId}.jpg`),
+          false,
+        );
+        res.json({ coverId });
+      } catch {
+        res
+          .status(400)
+          .json({ error: "That file couldn't be read as an image." });
+      }
+    },
+  );
+
   // PHASE 1: register a download job
   app.post("/api/download", async (req, res) => {
     const parsed = parseYouTubeUrl(req.body?.url);
@@ -1361,6 +1549,8 @@ function startWorker() {
             url: parsed.url,
             quality,
             overrides: sanitizeOverrides(req.body?.tags),
+            cover: sanitizeCover(req.body?.cover),
+            audio: sanitizeAudio(req.body?.audio),
           },
           ctl,
         ); // runs in the background
@@ -1370,7 +1560,14 @@ function startWorker() {
       // legacy flow: the client calls /api/download-file next
       await store.set(
         `${downloadId}:job`,
-        { videoId: parsed.id, url: parsed.url, quality },
+        {
+          videoId: parsed.id,
+          url: parsed.url,
+          quality,
+          overrides: sanitizeOverrides(req.body?.tags),
+          cover: sanitizeCover(req.body?.cover),
+          audio: sanitizeAudio(req.body?.audio),
+        },
         JOB_TTL,
       );
       setProgress(downloadId, 0);

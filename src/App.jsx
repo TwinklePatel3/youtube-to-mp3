@@ -21,6 +21,8 @@ const EMPTY_SONG = {
   year: "",
   composer: "",
   genre: "",
+  appleCover: "",
+  videoId: "",
   duration: 0,
 };
 
@@ -37,6 +39,31 @@ const TAG_FIELDS = [
   { key: "genre", label: "Genre" },
   { key: "composer", label: "Composer" },
 ];
+
+const INITIAL_COVER = {
+  source: "auto",
+  coverId: "",
+  preview: "",
+  uploading: false,
+  error: "",
+};
+const INITIAL_AUDIO = { normalize: false, start: "", end: "" };
+const COVER_LABEL = {
+  auto: "Automatic",
+  apple: "Apple Music",
+  youtube: "YouTube thumbnail",
+  custom: "Your image",
+};
+
+// "1:05" -> 65, "" -> 0, invalid -> NaN
+const parseTime = (text) => {
+  const t = String(text || "").trim();
+  if (!t) return 0;
+  const parts = t.split(":").map(Number);
+  if (parts.length > 3 || parts.some((n) => !Number.isFinite(n) || n < 0))
+    return NaN;
+  return parts.reduce((acc, n) => acc * 60 + n, 0);
+};
 
 const STEPS = ["Prepare", "Convert", "Save"];
 const STEP_OF = { preparing: 0, converting: 1 };
@@ -63,6 +90,8 @@ const toSong = (data) => ({
   year: data.releaseYear || "",
   composer: data.composer || "",
   genre: data.genre || "",
+  appleCover: data.appleCover || "",
+  videoId: data.videoId || "",
   duration: Number(data.duration) || 0,
 });
 
@@ -392,6 +421,47 @@ function Visualizer({ active = false }) {
 /* APP                                                                          */
 /* -------------------------------------------------------------------------- */
 
+function CoverTile({ active, disabled, label, sub, img, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={`rounded-[18px] border p-2 text-left transition ${
+        active
+          ? "border-pink-300 bg-pink-50/80 shadow-md shadow-pink-500/10"
+          : "border-white/80 bg-white/50 hover:bg-white/80"
+      } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+    >
+      <span className="block aspect-square w-full overflow-hidden rounded-xl bg-gradient-to-br from-red-100 via-pink-100 to-purple-100">
+        {img ? (
+          <img
+            src={img}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+            }}
+          />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center text-pink-400">
+            {children}
+          </span>
+        )}
+      </span>
+      <span
+        className={`mt-2 block text-[11px] font-black ${active ? "text-pink-600" : "text-slate-700"}`}
+      >
+        {label}
+      </span>
+      <span className="block text-[10px] font-medium text-slate-400">
+        {sub}
+      </span>
+    </button>
+  );
+}
+
 export default function App() {
   const [url, setUrl] = useState("");
   const [quality, setQuality] = useState(
@@ -410,6 +480,9 @@ export default function App() {
   const [done, setDone] = useState(false);
   const [edits, setEdits] = useState({}); // tags the user changed
   const [editing, setEditing] = useState(false);
+  const [cover, setCover] = useState(INITIAL_COVER);
+  const [audio, setAudio] = useState(INITIAL_AUDIO);
+  const fileRef = useRef(null);
 
   const songRun = useRef(0);
   const abortRef = useRef(null);
@@ -425,6 +498,8 @@ export default function App() {
     if (!song.title) {
       setEdits({});
       setEditing(false);
+      setCover(INITIAL_COVER);
+      setAudio(INITIAL_AUDIO);
     }
   }, [song.title]);
 
@@ -638,7 +713,65 @@ export default function App() {
   /* DOWNLOAD                                                                  */
   /* ------------------------------------------------------------------------ */
 
+  const uploadCover = async (file) => {
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
+      setCover((c) => ({ ...c, error: "Use a JPG, PNG or WebP image." }));
+      return;
+    }
+    if (file.size > 6 * 1024 * 1024) {
+      setCover((c) => ({ ...c, error: "That image is too large (max 6 MB)." }));
+      return;
+    }
+
+    setCover((c) => ({ ...c, uploading: true, error: "" }));
+    try {
+      const res = await fetch(`${API_URL}/api/cover`, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok)
+        throw new Error(data.error || "Upload failed. Please try again.");
+
+      setCover((c) => {
+        if (c.preview) URL.revokeObjectURL(c.preview);
+        return {
+          source: "custom",
+          coverId: data.coverId,
+          preview: URL.createObjectURL(file),
+          uploading: false,
+          error: "",
+        };
+      });
+    } catch (err) {
+      setCover((c) => ({
+        ...c,
+        uploading: false,
+        error: err.message || "Upload failed. Please try again.",
+      }));
+    }
+  };
+
   const startDownload = async () => {
+    const trimStart = parseTime(audio.start);
+    const trimEnd = parseTime(audio.end);
+    if (Number.isNaN(trimStart) || Number.isNaN(trimEnd)) {
+      setError(
+        "Check the start and end times. Use minutes and seconds, like 1:05.",
+      );
+      return;
+    }
+    if (trimEnd > 0 && trimEnd <= trimStart + 1) {
+      setError("The end time must be later than the start time.");
+      return;
+    }
+    if (song.duration > 0 && trimStart >= song.duration - 1) {
+      setError("The start time is past the end of the song.");
+      return;
+    }
+
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -657,7 +790,14 @@ export default function App() {
     try {
       const { downloadId: id } = await postJson(
         "/api/download",
-        { url: url.trim(), quality, delivery: "link", tags },
+        {
+          url: url.trim(),
+          quality,
+          delivery: "link",
+          tags,
+          cover: { source: cover.source, coverId: cover.coverId },
+          audio: { normalize: audio.normalize, trimStart, trimEnd },
+        },
         controller.signal,
       );
       setDownloadId(id); // the polling effect takes over from here
@@ -709,6 +849,10 @@ export default function App() {
   /* ------------------------------------------------------------------------ */
 
   const view = { ...song };
+  const audioSummary =
+    [audio.normalize && "Even volume", (audio.start || audio.end) && "Trimmed"]
+      .filter(Boolean)
+      .join(" · ") || "Original";
   for (const [key, value] of Object.entries(edits)) {
     if (String(value || "").trim()) view[key] = String(value).trim();
   }
@@ -894,6 +1038,7 @@ export default function App() {
               <FeaturePill>Cover artwork</FeaturePill>
               <FeaturePill>Music tags</FeaturePill>
               <FeaturePill>128 / 320 kbps</FeaturePill>
+              <FeaturePill>Shorts supported</FeaturePill>
             </div>
           )}
 
@@ -1101,6 +1246,192 @@ export default function App() {
                   </p>
                 </div>
               )}
+
+              {/* COVER ART + AUDIO OPTIONS */}
+
+              <div className="mb-5 grid gap-3">
+                <details className="rounded-[20px] border border-white/80 bg-white/50 px-4 py-3 open:bg-white/70">
+                  <summary className="cursor-pointer select-none text-sm font-black text-slate-800">
+                    Cover art
+                    <span className="ml-2 text-[11px] font-medium text-slate-400">
+                      {COVER_LABEL[cover.source]}
+                    </span>
+                  </summary>
+
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <CoverTile
+                      active={cover.source === "auto"}
+                      disabled={busy}
+                      label="Automatic"
+                      sub="Best available"
+                      img={song.thumbnail}
+                      onClick={() =>
+                        setCover((c) => ({ ...c, source: "auto" }))
+                      }
+                    />
+
+                    <CoverTile
+                      active={cover.source === "apple"}
+                      disabled={busy || !song.appleCover}
+                      label="Apple Music"
+                      sub={song.appleCover ? "Official art" : "No match found"}
+                      img={song.appleCover}
+                      onClick={() =>
+                        setCover((c) => ({ ...c, source: "apple" }))
+                      }
+                    >
+                      <MusicIcon size={26} />
+                    </CoverTile>
+
+                    <CoverTile
+                      active={cover.source === "youtube"}
+                      disabled={busy || !song.videoId}
+                      label="YouTube"
+                      sub="Video thumbnail"
+                      img={
+                        song.videoId
+                          ? `https://i.ytimg.com/vi/${song.videoId}/hqdefault.jpg`
+                          : ""
+                      }
+                      onClick={() =>
+                        setCover((c) => ({ ...c, source: "youtube" }))
+                      }
+                    >
+                      <MusicIcon size={26} />
+                    </CoverTile>
+
+                    <CoverTile
+                      active={cover.source === "custom"}
+                      disabled={busy || cover.uploading}
+                      label={cover.coverId ? "Your image" : "Upload"}
+                      sub={
+                        cover.uploading
+                          ? "Uploading…"
+                          : cover.coverId
+                            ? "Selected"
+                            : "JPG, PNG or WebP"
+                      }
+                      img={cover.preview}
+                      onClick={() =>
+                        cover.coverId
+                          ? setCover((c) => ({ ...c, source: "custom" }))
+                          : fileRef.current?.click()
+                      }
+                    >
+                      <span className="text-3xl font-light">+</span>
+                    </CoverTile>
+                  </div>
+
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    onChange={(event) => {
+                      uploadCover(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+
+                  {cover.coverId && (
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      disabled={busy || cover.uploading}
+                      className="mt-3 text-[11px] font-black text-pink-500 underline underline-offset-2"
+                    >
+                      Replace your image
+                    </button>
+                  )}
+
+                  {cover.error && (
+                    <p
+                      role="alert"
+                      className="mt-3 text-[11px] font-semibold text-red-500"
+                    >
+                      {cover.error}
+                    </p>
+                  )}
+                </details>
+
+                <details className="rounded-[20px] border border-white/80 bg-white/50 px-4 py-3 open:bg-white/70">
+                  <summary className="cursor-pointer select-none text-sm font-black text-slate-800">
+                    Audio options
+                    <span className="ml-2 text-[11px] font-medium text-slate-400">
+                      {audioSummary}
+                    </span>
+                  </summary>
+
+                  <div className="mt-3 space-y-3">
+                    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-white bg-white/70 px-3.5 py-3">
+                      <span>
+                        <span className="block text-sm font-bold text-slate-700">
+                          Even out the volume
+                        </span>
+                        <span className="block text-[11px] font-medium text-slate-400">
+                          Normalizes loudness so songs play at a similar level.
+                        </span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={audio.normalize}
+                        onChange={(event) =>
+                          setAudio((a) => ({
+                            ...a,
+                            normalize: event.target.checked,
+                          }))
+                        }
+                        disabled={busy}
+                        className="h-5 w-5 shrink-0 accent-pink-500"
+                      />
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <label>
+                        <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          Start at
+                        </span>
+                        <input
+                          value={audio.start}
+                          onChange={(event) =>
+                            setAudio((a) => ({
+                              ...a,
+                              start: event.target.value,
+                            }))
+                          }
+                          disabled={busy}
+                          placeholder="0:00"
+                          inputMode="numeric"
+                          className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
+                        />
+                      </label>
+
+                      <label>
+                        <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          End at
+                        </span>
+                        <input
+                          value={audio.end}
+                          onChange={(event) =>
+                            setAudio((a) => ({ ...a, end: event.target.value }))
+                          }
+                          disabled={busy}
+                          placeholder={
+                            song.duration ? fmtDuration(song.duration) : "end"
+                          }
+                          inputMode="numeric"
+                          className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
+                        />
+                      </label>
+                    </div>
+
+                    <p className="text-[11px] font-medium text-slate-400">
+                      Cut the beginning or the end. Use minutes and seconds,
+                      like 1:05. Leave both empty to keep the whole song.
+                    </p>
+                  </div>
+                </details>
+              </div>
 
               {/* QUALITY */}
 
