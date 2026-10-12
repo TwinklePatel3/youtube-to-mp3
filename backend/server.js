@@ -1142,10 +1142,15 @@ function startWorker() {
     status: process.env.YT_SELFTEST === "0" ? "disabled" : "pending",
   };
 
-  function checkYoutube() {
+  function checkYoutube(videoUrl = SELFTEST_VIDEO) {
     if (process.env.YT_SELFTEST === "0" || youtubeCheck.status === "checking")
       return;
-    youtubeCheck = { status: "checking", startedAt: new Date().toISOString() };
+    const testId = (videoUrl.match(/v=([\w-]{11})/) || [])[1] || "";
+    youtubeCheck = {
+      status: "checking",
+      video: testId,
+      startedAt: new Date().toISOString(),
+    };
     const started = Date.now();
     const child = spawn(
       YT_DLP_PATH,
@@ -1155,7 +1160,7 @@ function startWorker() {
         "--ignore-no-formats-error",
         "--print",
         "%(id)s",
-        SELFTEST_VIDEO,
+        videoUrl,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -1167,6 +1172,7 @@ function startWorker() {
       clearTimeout(timer);
       youtubeCheck = {
         status,
+        video: testId,
         detail,
         seconds: Math.round((Date.now() - started) / 1000),
         checkedAt: new Date().toISOString(),
@@ -1178,8 +1184,8 @@ function startWorker() {
     };
     child.on("error", (e) => finish("error", e.message));
     child.on("close", (code, signal) => {
-      if (code === 0 && /jNQXAC9IVRw/.test(out)) {
-        return finish("ok", "YouTube accepted this server.");
+      if (code === 0 && testId && out.includes(testId)) {
+        return finish("ok", "YouTube accepted this server for this video.");
       }
       if (/sign in to confirm|not a bot/i.test(out)) {
         const hint = cookieInfo.loaded
@@ -1200,9 +1206,13 @@ function startWorker() {
   let lastRecheck = 0;
   app.get("/health", (req, res) => {
     // /health?recheck=1 re-runs the YouTube test (at most once a minute)
+    // /health?recheck=1&url=<YouTube link> tests that exact video with the same cookies
     if (req.query.recheck && Date.now() - lastRecheck > 60_000) {
       lastRecheck = Date.now();
-      checkYoutube();
+      const target = req.query.url
+        ? parseYouTubeUrl(String(req.query.url))
+        : null;
+      checkYoutube(target ? target.url : SELFTEST_VIDEO);
     }
     res.json({
       ok: true,
@@ -1368,6 +1378,8 @@ function startWorker() {
 
       const info = await started.infoReady; // arrives just before audio starts flowing
       if (ctl.aborted) throw new Error("Cancelled");
+      if (!info && started.proc.exitCode > 0)
+        throw new Error("yt-dlp could not fetch this video"); // nothing will arrive
       const detected = await enrichWithItunes(
         videoId,
         buildMeta(info, await oembedP),
