@@ -311,14 +311,75 @@ function startWorker() {
       .trim()
       .slice(0, 150) || "audio";
 
+  // ---- YouTube cookies / proxy ------------------------------------------------------
+  // Cloud hosts (Render, AWS ...) get YouTube's "Sign in to confirm you're not a bot" check.
+  // Cookies from a logged-in session (or a residential proxy) are the usual fix. Sources, in order:
+  //   YT_COOKIES_B64  base64 of cookies.txt, set as an environment variable
+  //   YT_COOKIES_FILE path to a cookies.txt
+  //   /etc/secrets/youtube-cookies.txt  (Render "Secret File")
+  //   ./youtube-cookies.txt next to server.js
+  // yt-dlp writes cookies back to its file, and secret files are read-only, so a private copy is used.
+  const COOKIE_RUNTIME = path.join(
+    os.tmpdir(),
+    `yt-cookies-${process.pid}.txt`,
+  );
+  const cookieInfo = { loaded: false, source: "", youtubeCookies: 0 };
+  let cookieArgs = [];
+
+  (function setupCookies() {
+    try {
+      let text = "";
+      if (process.env.YT_COOKIES_B64) {
+        text = Buffer.from(process.env.YT_COOKIES_B64, "base64").toString(
+          "utf8",
+        );
+        cookieInfo.source = "YT_COOKIES_B64";
+      } else {
+        const found = [
+          process.env.YT_COOKIES_FILE,
+          "/etc/secrets/youtube-cookies.txt",
+          COOKIE_PATH,
+        ]
+          .filter(Boolean)
+          .find((p) => fs.existsSync(p));
+        if (!found) return;
+        text = fs.readFileSync(found, "utf8");
+        cookieInfo.source = found;
+      }
+      fs.writeFileSync(COOKIE_RUNTIME, text.replace(/\r\n/g, "\n"), {
+        mode: 0o600,
+      });
+      cookieInfo.youtubeCookies = text
+        .split("\n")
+        .filter((l) => /^\.?[^#\t]*youtube\.com\t/.test(l)).length;
+      cookieInfo.loaded = true;
+      cookieArgs = ["--cookies", COOKIE_RUNTIME];
+      if (!cookieInfo.youtubeCookies) {
+        console.warn(
+          "YouTube cookies file found but it has no youtube.com cookies (wrong export?)",
+        );
+      }
+    } catch (e) {
+      console.error("Could not set up YouTube cookies:", e.message);
+    }
+  })();
+  process.on("exit", () => {
+    try {
+      fs.rmSync(COOKIE_RUNTIME, { force: true });
+    } catch {}
+  });
+
   const ytDlpBaseArgs = () => {
     const args = [
       "--no-playlist",
       "--no-warnings",
       "--js-runtimes",
       `node:${NODE_PATH}`,
+      ...cookieArgs,
     ];
-    if (fs.existsSync(COOKIE_PATH)) args.push("--cookies", COOKIE_PATH);
+    if (process.env.YT_PROXY) args.push("--proxy", process.env.YT_PROXY); // e.g. a residential proxy
+    if (process.env.YT_EXTRA_ARGS)
+      args.push(...process.env.YT_EXTRA_ARGS.split(/\s+/).filter(Boolean));
     return args;
   };
 
@@ -1062,7 +1123,8 @@ function startWorker() {
         ? ff.out.split("\n")[0]
         : `MISSING (${FFMPEG_PATH}): ${ff.out.trim().slice(0, 120)}`,
       mp3Encoder: enc.ok && /libmp3lame/.test(enc.out),
-      cookiesFile: fs.existsSync(COOKIE_PATH),
+      cookies: cookieInfo,
+      proxy: !!process.env.YT_PROXY,
       node: process.version,
     };
     console.log(`[${process.pid}] TOOL CHECK:`, JSON.stringify(toolStatus));
