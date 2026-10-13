@@ -369,7 +369,8 @@ function startWorker() {
     } catch {}
   });
 
-  const ytDlpBaseArgs = () => {
+  let activeClientArgs = []; // set by the client sweep when YT_AUTO_CLIENT=1
+  const ytDlpBaseArgs = ({ plain = false } = {}) => {
     const args = [
       "--no-playlist",
       "--no-warnings",
@@ -378,8 +379,11 @@ function startWorker() {
       ...cookieArgs,
     ];
     if (process.env.YT_PROXY) args.push("--proxy", process.env.YT_PROXY); // e.g. a residential proxy
-    if (process.env.YT_EXTRA_ARGS)
-      args.push(...process.env.YT_EXTRA_ARGS.split(/\s+/).filter(Boolean));
+    if (!plain) {
+      args.push(...activeClientArgs);
+      if (process.env.YT_EXTRA_ARGS)
+        args.push(...process.env.YT_EXTRA_ARGS.split(/\s+/).filter(Boolean));
+    }
     return args;
   };
 
@@ -1134,74 +1138,126 @@ function startWorker() {
       );
   })();
 
-  // ---- does YouTube accept this server right now? ------------------------------------
-  // Runs yt-dlp once against a public video (no download) and reports ok / blocked / error in /health,
-  // so a cookie or proxy change can be verified in seconds. Disable with YT_SELFTEST=0.
+  // ---- does YouTube accept this server right now? ---------------------------------------
+  // A strict probe: it resolves the audio format exactly like a real download (no errors are ignored),
+  // so "ok" means a download should work. Disable the startup probe with YT_SELFTEST=0.
   const SELFTEST_VIDEO = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
+  const idOf = (u) => (String(u).match(/v=([\w-]{11})/) || [])[1] || "";
+
+  function probeYoutube(videoUrl, extraArgs = [], { plain = false } = {}) {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const id = idOf(videoUrl);
+      const child = spawn(
+        YT_DLP_PATH,
+        [
+          ...ytDlpBaseArgs({ plain }),
+          ...extraArgs,
+          "--simulate",
+          "-f",
+          "bestaudio/best",
+          "--print",
+          "%(id)s|%(format_id)s",
+          videoUrl,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      const timer = setTimeout(() => child.kill("SIGKILL"), 90_000);
+      const done = (status, detail) => {
+        clearTimeout(timer);
+        resolve({
+          status,
+          video: id,
+          detail,
+          seconds: Math.round((Date.now() - started) / 1000),
+          checkedAt: new Date().toISOString(),
+        });
+      };
+      child.on("error", (e) => done("error", e.message));
+      child.on("close", (code, signal) => {
+        if (code === 0 && id && out.includes(`${id}|`))
+          return done("ok", "YouTube accepted this server for this video.");
+        if (/sign in to confirm|not a bot/i.test(out)) {
+          return done(
+            "blocked",
+            cookieInfo.loaded
+              ? "YouTube asked for sign-in even with cookies: the cookies may be expired, or this client/IP is blocked."
+              : "YouTube asked for sign-in and no cookies are loaded.",
+          );
+        }
+        done(
+          "error",
+          signal
+            ? "Timed out after 90 s."
+            : out.trim().split("\n").pop().slice(0, 200) ||
+                "YouTube returned no usable audio format.",
+        );
+      });
+    });
+  }
+
   let youtubeCheck = {
     status: process.env.YT_SELFTEST === "0" ? "disabled" : "pending",
   };
-
   function checkYoutube(videoUrl = SELFTEST_VIDEO) {
-    if (process.env.YT_SELFTEST === "0" || youtubeCheck.status === "checking")
-      return;
-    const testId = (videoUrl.match(/v=([\w-]{11})/) || [])[1] || "";
+    if (youtubeCheck.status === "checking") return;
     youtubeCheck = {
       status: "checking",
-      video: testId,
+      video: idOf(videoUrl),
       startedAt: new Date().toISOString(),
     };
-    const started = Date.now();
-    const child = spawn(
-      YT_DLP_PATH,
-      [
-        ...ytDlpBaseArgs(),
-        "--simulate",
-        "--ignore-no-formats-error",
-        "--print",
-        "%(id)s",
-        videoUrl,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let out = "";
-    child.stdout.on("data", (d) => (out += d));
-    child.stderr.on("data", (d) => (out += d));
-    const timer = setTimeout(() => child.kill("SIGKILL"), 90_000);
-    const finish = (status, detail) => {
-      clearTimeout(timer);
-      youtubeCheck = {
-        status,
-        video: testId,
-        detail,
-        seconds: Math.round((Date.now() - started) / 1000),
-        checkedAt: new Date().toISOString(),
-      };
-      console.log(
-        `[${process.pid}] YOUTUBE CHECK:`,
-        JSON.stringify(youtubeCheck),
-      );
-    };
-    child.on("error", (e) => finish("error", e.message));
-    child.on("close", (code, signal) => {
-      if (code === 0 && testId && out.includes(testId)) {
-        return finish("ok", "YouTube accepted this server for this video.");
-      }
-      if (/sign in to confirm|not a bot/i.test(out)) {
-        const hint = cookieInfo.loaded
-          ? "YouTube blocked the request even with cookies: they are probably expired, or this server's IP is blocked. Re-export fresh cookies from a private window, or use YT_PROXY."
-          : "YouTube blocked the request and no cookies are loaded. Add cookies (YT_COOKIES_B64 or a secret file) or use YT_PROXY.";
-        return finish("blocked", hint);
-      }
-      finish(
-        "error",
-        signal
-          ? "Timed out after 90 s."
-          : out.trim().split("\n").pop().slice(0, 200),
-      );
+    probeYoutube(videoUrl).then((r) => {
+      youtubeCheck = r;
+      console.log(`[${process.pid}] YOUTUBE CHECK:`, JSON.stringify(r));
     });
   }
-  setTimeout(checkYoutube, 3000); // after startup, so it doesn't slow the first requests
+  if (process.env.YT_SELFTEST !== "0") setTimeout(checkYoutube, 3000); // after startup
+
+  // Client sweep: tries several yt-dlp YouTube clients on one video and reports which ones work.
+  // With YT_AUTO_CLIENT=1 the first working client is used for all downloads, and the sweep also
+  // starts by itself when a real download hits the bot check.
+  const CLIENTS = (
+    process.env.YT_CLIENT_CANDIDATES ||
+    "default,web_safari,mweb,tv,tv_simply,web_embedded,android_vr,ios"
+  )
+    .split(",")
+    .map((c) => c.trim())
+    .filter((c) => /^[a-z0-9_]+$/.test(c));
+  let youtubeSweep = { status: "idle" };
+  let lastSweep = 0;
+
+  async function runSweep(videoUrl) {
+    if (youtubeSweep.status === "running") return;
+    youtubeSweep = { status: "running", video: idOf(videoUrl), results: [] };
+    for (const client of CLIENTS) {
+      const extra =
+        client === "default"
+          ? []
+          : ["--extractor-args", `youtube:player_client=${client}`];
+      const r = await probeYoutube(videoUrl, extra, { plain: true });
+      youtubeSweep.results.push({
+        client,
+        status: r.status,
+        seconds: r.seconds,
+        detail: r.status === "ok" ? "" : r.detail.slice(0, 90),
+      });
+      if (r.status === "ok") break; // first working client is enough
+    }
+    const winner = youtubeSweep.results.find((r) => r.status === "ok");
+    youtubeSweep.status = "done";
+    youtubeSweep.recommended = winner ? winner.client : null;
+    if (winner && process.env.YT_AUTO_CLIENT === "1") {
+      activeClientArgs =
+        winner.client === "default"
+          ? []
+          : ["--extractor-args", `youtube:player_client=${winner.client}`];
+      youtubeSweep.applied = winner.client;
+    }
+    console.log(`[${process.pid}] CLIENT SWEEP:`, JSON.stringify(youtubeSweep));
+  }
 
   let lastRecheck = 0;
   app.get("/health", (req, res) => {
@@ -1214,6 +1270,14 @@ function startWorker() {
         : null;
       checkYoutube(target ? target.url : SELFTEST_VIDEO);
     }
+    // /health?sweep=1&url=<YouTube link> finds which YouTube client works for that video (takes ~1 min)
+    if (req.query.sweep && Date.now() - lastSweep > 120_000) {
+      lastSweep = Date.now();
+      const target = req.query.url
+        ? parseYouTubeUrl(String(req.query.url))
+        : null;
+      runSweep(target ? target.url : SELFTEST_VIDEO);
+    }
     res.json({
       ok: true,
       pid: process.pid,
@@ -1223,6 +1287,8 @@ function startWorker() {
       allowedOrigins: ALLOW_ALL_ORIGINS ? "*" : ALLOWED_ORIGINS,
       tools: toolStatus,
       youtube: youtubeCheck,
+      youtubeSweep,
+      activeClient: activeClientArgs.join(" ") || "default",
     });
   });
 
@@ -1588,6 +1654,15 @@ function startWorker() {
           e.message,
           e.ytErr ? `| yt-dlp: ${e.ytErr}` : "",
         );
+      if (
+        process.env.YT_AUTO_CLIENT === "1" &&
+        !ctl.aborted &&
+        /sign in to confirm|not a bot/i.test(`${e.message} ${e.ytErr || ""}`) &&
+        Date.now() - lastSweep > 10 * 60_000
+      ) {
+        lastSweep = Date.now();
+        runSweep(job.url); // find a working client in the background; the next attempt uses it
+      }
       await store.set(
         `${id}:err`,
         ctl.aborted ? "Download cancelled." : friendlyError(e, e.ytErr),
@@ -1639,11 +1714,9 @@ function startWorker() {
           !m.height ||
           Math.min(m.width, m.height) < 200
         ) {
-          return res
-            .status(400)
-            .json({
-              error: "The image must be a JPG, PNG or WebP of at least 200 px.",
-            });
+          return res.status(400).json({
+            error: "The image must be a JPG, PNG or WebP of at least 200 px.",
+          });
         }
         const coverId = crypto.randomUUID();
         await renderCover(
@@ -1675,12 +1748,10 @@ function startWorker() {
       if (req.body?.delivery === "link") {
         if (limiter.waiting >= MAX_QUEUE) {
           res.setHeader("Retry-After", "10");
-          return res
-            .status(503)
-            .json({
-              error:
-                "The converter is busy right now. Try again in a few seconds.",
-            });
+          return res.status(503).json({
+            error:
+              "The converter is busy right now. Try again in a few seconds.",
+          });
         }
         cancelMetaFetch(parsed.id); // the conversion supplies the same metadata
         setProgress(downloadId, 0);
