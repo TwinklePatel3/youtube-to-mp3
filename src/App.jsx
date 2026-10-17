@@ -27,8 +27,18 @@ const EMPTY_SONG = {
 };
 
 const QUALITIES = [
-  { value: "128", title: "128 kbps", noteKey: "noteSmaller", badgeKey: "badgeLight" },
-  { value: "320", title: "320 kbps", noteKey: "noteHigher", badgeKey: "badgeHifi" },
+  {
+    value: "128",
+    title: "128 kbps",
+    noteKey: "noteSmaller",
+    badgeKey: "badgeLight",
+  },
+  {
+    value: "320",
+    title: "320 kbps",
+    noteKey: "noteHigher",
+    badgeKey: "badgeHifi",
+  },
 ];
 
 const TAG_FIELDS = [
@@ -40,16 +50,28 @@ const TAG_FIELDS = [
   { key: "composer", labelKey: "fieldComposer" },
 ];
 
-const INITIAL_COVER = { source: "auto", coverId: "", preview: "", uploading: false, error: "" };
+const INITIAL_COVER = {
+  source: "auto",
+  coverId: "",
+  preview: "",
+  uploading: false,
+  error: "",
+};
 const INITIAL_AUDIO = { normalize: false, start: "", end: "" };
-const COVER_LABEL = { auto: "coverAuto", apple: "coverApple", youtube: "coverYoutube", custom: "coverCustom" };
+const COVER_LABEL = {
+  auto: "coverAuto",
+  apple: "coverApple",
+  youtube: "coverYoutube",
+  custom: "coverCustom",
+};
 
 // "1:05" -> 65, "" -> 0, invalid -> NaN
 const parseTime = (text) => {
   const t = String(text || "").trim();
   if (!t) return 0;
   const parts = t.split(":").map(Number);
-  if (parts.length > 3 || parts.some((n) => !Number.isFinite(n) || n < 0)) return NaN;
+  if (parts.length > 3 || parts.some((n) => !Number.isFinite(n) || n < 0))
+    return NaN;
   return parts.reduce((acc, n) => acc * 60 + n, 0);
 };
 
@@ -65,309 +87,338 @@ const gradient = "bg-gradient-to-r from-red-500 via-pink-500 to-purple-500";
 /* -------------------------------------------------------------------------- */
 
 const STRINGS = {
-  "en": {
-    "brandTagline": "Simple · Fast · Beautiful",
-    "statusPill": "Ready to convert",
-    "badge": "Free to use · No sign-up",
-    "heroLine1": "Your music.",
-    "heroLine2": "Your MP3.",
-    "heroSub": "Paste a YouTube link and turn it into a polished MP3 with artwork, title, artist and album information ready for your music library.",
-    "linkLabel": "YouTube link",
-    "placeholder": "Paste your YouTube link…",
-    "paste": "Paste",
-    "finding": "Finding",
-    "findSong": "Find song",
-    "pillCover": "Cover artwork",
-    "pillTags": "Music tags",
-    "pillQuality": "128 / 320 kbps",
-    "pillShorts": "Shorts supported",
-    "tryAgain": "Try again",
-    "ready": "Ready",
-    "unknownArtist": "Unknown artist",
-    "lookingUp": "Looking up album and credits…",
-    "musicBy": "Music by",
-    "editTags": "Edit tags",
-    "doneEditing": "Done editing",
-    "resetDetected": "Reset to detected",
-    "editHint": "These values are written into the MP3. Leave a field empty to keep the detected value.",
-    "coverArt": "Cover art",
-    "replaceImage": "Replace your image",
-    "audioOptions": "Audio options",
-    "evenVolume": "Even out the volume",
-    "evenVolumeHint": "Normalizes loudness so songs play at a similar level.",
-    "startAt": "Start at",
-    "endAt": "End at",
-    "trimHint": "Cut the beginning or the end. Use minutes and seconds, like 1:05. Leave both empty to keep the whole song.",
-    "audioQuality": "Audio quality",
-    "qualityHint": "Choose the balance between size and quality.",
-    "cancel": "Cancel",
-    "downloadMp3": "Download MP3",
-    "mp3Ready": "Your MP3 is ready",
-    "readyHelp": "If the download didn't start, tap Save MP3. On iPhone or iPad, choose Download, or Share then Save to Files.",
-    "saveMp3": "Save MP3",
-    "convertAnother": "Convert another",
-    "footer": "Made for your music library",
-    "selected": "Selected",
-    "mp3Audio": "MP3 Audio",
-    "noteSmaller": "Smaller file",
-    "noteHigher": "Higher quality",
-    "badgeLight": "Light",
-    "badgeHifi": "Hi-Fi",
-    "fieldTitle": "Title",
-    "fieldArtist": "Artist(s)",
-    "fieldAlbum": "Album / movie",
-    "fieldYear": "Year",
-    "fieldGenre": "Genre",
-    "fieldComposer": "Composer",
-    "coverAuto": "Automatic",
-    "coverApple": "Apple Music",
-    "coverYoutube": "YouTube thumbnail",
-    "coverCustom": "Your image",
-    "subBest": "Best available",
-    "subOfficial": "Official art",
-    "subNoMatch": "No match found",
-    "subThumb": "Video thumbnail",
-    "upload": "Upload",
-    "uploading": "Uploading…",
-    "subTypes": "JPG, PNG or WebP",
-    "sumEven": "Even volume",
-    "sumTrimmed": "Trimmed",
-    "sumOriginal": "Original",
-    "stepPrepare": "Prepare",
-    "stepConvert": "Convert",
-    "stepSave": "Save",
-    "preparing": "Preparing",
-    "converting": "Converting",
-    "statusPreparing": "Contacting YouTube. The first request can take a little longer.",
-    "statusConverting": "Converting your audio and adding artwork & tags.",
-    "errPaste": "Paste a YouTube link to continue.",
-    "errNotYoutube": "That doesn't look like a YouTube link. Copy it from the address bar or the Share button.",
-    "errLoadVideo": "Couldn't load this video. Check the link and try again.",
-    "errClipboardEmpty": "Your clipboard doesn't contain a link.",
-    "errClipboard": "Couldn't read the clipboard. Paste the link into the box instead.",
-    "errImageType": "Use a JPG, PNG or WebP image.",
-    "errImageSize": "That image is too large (max 6 MB).",
-    "errUpload": "Upload failed. Please try again.",
-    "errImageSmall": "The image must be a JPG, PNG or WebP of at least 200 px.",
-    "errImageRead": "That file couldn't be read as an image.",
-    "errTimes": "Check the start and end times. Use minutes and seconds, like 1:05.",
-    "errEndAfterStart": "The end time must be later than the start time.",
-    "errStartPastEnd": "The start time is past the end of the song.",
-    "cancelled": "Download cancelled.",
-    "errStart": "Couldn't start the download. Please try again.",
-    "errConvert": "Conversion failed. Please try again.",
-    "errSlow": "This is taking too long. Please try again.",
-    "errGeneric": "Something went wrong. Please try again.",
-    "errBusy": "The converter is busy right now. Try again in a few seconds.",
-    "errBlocked": "YouTube is blocking the server right now. Please try again in a little while.",
-    "errUnavailable": "This video isn't available for download.",
-    "errTooMany": "Too many uploads. Please wait a few minutes.",
-    "language": "Language",
-    "lightMode": "Switch to light mode",
-    "darkMode": "Switch to dark mode"
+  en: {
+    brandTagline: "Simple · Fast · Beautiful",
+    statusPill: "Ready to convert",
+    badge: "Free to use · No sign-up",
+    heroLine1: "Your music.",
+    heroLine2: "Your MP3.",
+    heroSub:
+      "Paste a YouTube link and turn it into a polished MP3 with artwork, title, artist and album information ready for your music library.",
+    linkLabel: "YouTube link",
+    placeholder: "Paste your YouTube link…",
+    paste: "Paste",
+    finding: "Finding",
+    findSong: "Find song",
+    pillCover: "Cover artwork",
+    pillTags: "Music tags",
+    pillQuality: "128 / 320 kbps",
+    pillShorts: "Shorts supported",
+    tryAgain: "Try again",
+    ready: "Ready",
+    unknownArtist: "Unknown artist",
+    lookingUp: "Looking up album and credits…",
+    musicBy: "Music by",
+    editTags: "Edit tags",
+    doneEditing: "Done editing",
+    resetDetected: "Reset to detected",
+    editHint:
+      "These values are written into the MP3. Leave a field empty to keep the detected value.",
+    coverArt: "Cover art",
+    replaceImage: "Replace your image",
+    audioOptions: "Audio options",
+    evenVolume: "Even out the volume",
+    evenVolumeHint: "Normalizes loudness so songs play at a similar level.",
+    startAt: "Start at",
+    endAt: "End at",
+    trimHint:
+      "Cut the beginning or the end. Use minutes and seconds, like 1:05. Leave both empty to keep the whole song.",
+    audioQuality: "Audio quality",
+    qualityHint: "Choose the balance between size and quality.",
+    cancel: "Cancel",
+    downloadMp3: "Download MP3",
+    mp3Ready: "Your MP3 is ready",
+    readyHelp:
+      "If the download didn't start, tap Save MP3. On iPhone or iPad, choose Download, or Share then Save to Files.",
+    saveMp3: "Save MP3",
+    convertAnother: "Convert another",
+    footer: "Made for your music library",
+    selected: "Selected",
+    mp3Audio: "MP3 Audio",
+    noteSmaller: "Smaller file",
+    noteHigher: "Higher quality",
+    badgeLight: "Light",
+    badgeHifi: "Hi-Fi",
+    fieldTitle: "Title",
+    fieldArtist: "Artist(s)",
+    fieldAlbum: "Album / movie",
+    fieldYear: "Year",
+    fieldGenre: "Genre",
+    fieldComposer: "Composer",
+    coverAuto: "Automatic",
+    coverApple: "Apple Music",
+    coverYoutube: "YouTube thumbnail",
+    coverCustom: "Your image",
+    subBest: "Best available",
+    subOfficial: "Official art",
+    subNoMatch: "No match found",
+    subThumb: "Video thumbnail",
+    upload: "Upload",
+    uploading: "Uploading…",
+    subTypes: "JPG, PNG or WebP",
+    sumEven: "Even volume",
+    sumTrimmed: "Trimmed",
+    sumOriginal: "Original",
+    stepPrepare: "Prepare",
+    stepConvert: "Convert",
+    stepSave: "Save",
+    preparing: "Preparing",
+    converting: "Converting",
+    statusPreparing:
+      "Contacting YouTube. The first request can take a little longer.",
+    statusConverting: "Converting your audio and adding artwork & tags.",
+    errPaste: "Paste a YouTube link to continue.",
+    errNotYoutube:
+      "That doesn't look like a YouTube link. Copy it from the address bar or the Share button.",
+    errLoadVideo: "Couldn't load this video. Check the link and try again.",
+    errClipboardEmpty: "Your clipboard doesn't contain a link.",
+    errClipboard:
+      "Couldn't read the clipboard. Paste the link into the box instead.",
+    errImageType: "Use a JPG, PNG or WebP image.",
+    errImageSize: "That image is too large (max 6 MB).",
+    errUpload: "Upload failed. Please try again.",
+    errImageSmall: "The image must be a JPG, PNG or WebP of at least 200 px.",
+    errImageRead: "That file couldn't be read as an image.",
+    errTimes:
+      "Check the start and end times. Use minutes and seconds, like 1:05.",
+    errEndAfterStart: "The end time must be later than the start time.",
+    errStartPastEnd: "The start time is past the end of the song.",
+    cancelled: "Download cancelled.",
+    errStart: "Couldn't start the download. Please try again.",
+    errConvert: "Conversion failed. Please try again.",
+    errSlow: "This is taking too long. Please try again.",
+    errGeneric: "Something went wrong. Please try again.",
+    errBusy: "The converter is busy right now. Try again in a few seconds.",
+    errBlocked:
+      "YouTube is blocking the server right now. Please try again in a little while.",
+    errUnavailable: "This video isn't available for download.",
+    errTooMany: "Too many uploads. Please wait a few minutes.",
+    language: "Language",
+    lightMode: "Switch to light mode",
+    darkMode: "Switch to dark mode",
   },
-  "hi": {
-    "brandTagline": "सरल · तेज़ · सुंदर",
-    "statusPill": "कन्वर्ट करने के लिए तैयार",
-    "badge": "मुफ़्त · साइन-अप की ज़रूरत नहीं",
-    "heroLine1": "आपका संगीत।",
-    "heroLine2": "आपका MP3।",
-    "heroSub": "YouTube लिंक पेस्ट करें और उसे आर्टवर्क, टाइटल, कलाकार और एल्बम की जानकारी के साथ एक बढ़िया MP3 में बदलें, जो आपकी म्यूज़िक लाइब्रेरी के लिए तैयार हो।",
-    "linkLabel": "YouTube लिंक",
-    "placeholder": "अपना YouTube लिंक यहाँ पेस्ट करें…",
-    "paste": "पेस्ट",
-    "finding": "खोज रहे हैं",
-    "findSong": "गाना खोजें",
-    "pillCover": "कवर आर्टवर्क",
-    "pillTags": "म्यूज़िक टैग",
-    "pillQuality": "128 / 320 kbps",
-    "pillShorts": "Shorts समर्थित",
-    "tryAgain": "फिर कोशिश करें",
-    "ready": "तैयार",
-    "unknownArtist": "अज्ञात कलाकार",
-    "lookingUp": "एल्बम और क्रेडिट खोजे जा रहे हैं…",
-    "musicBy": "संगीत:",
-    "editTags": "टैग बदलें",
-    "doneEditing": "बदलाव पूरा",
-    "resetDetected": "पहचाने गए मान पर लौटें",
-    "editHint": "ये मान MP3 में लिखे जाएँगे। पहचाना गया मान रखने के लिए खाना खाली छोड़ें।",
-    "coverArt": "कवर आर्ट",
-    "replaceImage": "अपनी इमेज बदलें",
-    "audioOptions": "ऑडियो विकल्प",
-    "evenVolume": "आवाज़ बराबर करें",
-    "evenVolumeHint": "लाउडनेस को सामान्य करता है ताकि सभी गाने लगभग एक जैसी आवाज़ में बजें।",
-    "startAt": "शुरू",
-    "endAt": "अंत",
-    "trimHint": "शुरुआत या अंत काटें। मिनट और सेकंड में लिखें, जैसे 1:05। पूरा गाना रखने के लिए दोनों खाली छोड़ें।",
-    "audioQuality": "ऑडियो क्वालिटी",
-    "qualityHint": "फ़ाइल साइज़ और क्वालिटी के बीच संतुलन चुनें।",
-    "cancel": "रद्द करें",
-    "downloadMp3": "MP3 डाउनलोड करें",
-    "mp3Ready": "आपका MP3 तैयार है",
-    "readyHelp": "अगर डाउनलोड शुरू नहीं हुआ, तो MP3 सेव करें पर टैप करें। iPhone या iPad पर डाउनलोड चुनें, या शेयर करके 'Files में सेव करें' चुनें।",
-    "saveMp3": "MP3 सेव करें",
-    "convertAnother": "दूसरा गाना बदलें",
-    "footer": "आपकी म्यूज़िक लाइब्रेरी के लिए",
-    "selected": "चुना गया",
-    "mp3Audio": "MP3 ऑडियो",
-    "noteSmaller": "छोटी फ़ाइल",
-    "noteHigher": "बेहतर क्वालिटी",
-    "badgeLight": "हल्का",
-    "badgeHifi": "Hi-Fi",
-    "fieldTitle": "शीर्षक",
-    "fieldArtist": "कलाकार",
-    "fieldAlbum": "एल्बम / फ़िल्म",
-    "fieldYear": "वर्ष",
-    "fieldGenre": "शैली",
-    "fieldComposer": "संगीतकार",
-    "coverAuto": "स्वचालित",
-    "coverApple": "Apple Music",
-    "coverYoutube": "YouTube थंबनेल",
-    "coverCustom": "आपकी इमेज",
-    "subBest": "सबसे अच्छा उपलब्ध",
-    "subOfficial": "आधिकारिक आर्ट",
-    "subNoMatch": "कोई मिलान नहीं",
-    "subThumb": "वीडियो थंबनेल",
-    "upload": "अपलोड",
-    "uploading": "अपलोड हो रहा है…",
-    "subTypes": "JPG, PNG या WebP",
-    "sumEven": "बराबर आवाज़",
-    "sumTrimmed": "ट्रिम किया",
-    "sumOriginal": "मूल",
-    "stepPrepare": "तैयारी",
-    "stepConvert": "कन्वर्ट",
-    "stepSave": "सेव",
-    "preparing": "तैयारी",
-    "converting": "कन्वर्ट हो रहा है",
-    "statusPreparing": "YouTube से जुड़ रहे हैं। पहली बार में थोड़ा समय लग सकता है।",
-    "statusConverting": "ऑडियो कन्वर्ट हो रहा है और आर्टवर्क व टैग जोड़े जा रहे हैं।",
-    "errPaste": "जारी रखने के लिए YouTube लिंक पेस्ट करें।",
-    "errNotYoutube": "यह YouTube लिंक जैसा नहीं लग रहा। इसे एड्रेस बार या Share बटन से कॉपी करें।",
-    "errLoadVideo": "यह वीडियो लोड नहीं हो सका। लिंक जाँचें और फिर कोशिश करें।",
-    "errClipboardEmpty": "आपके क्लिपबोर्ड में कोई लिंक नहीं है।",
-    "errClipboard": "क्लिपबोर्ड पढ़ा नहीं जा सका। लिंक को बॉक्स में पेस्ट करें।",
-    "errImageType": "JPG, PNG या WebP इमेज इस्तेमाल करें।",
-    "errImageSize": "यह इमेज बहुत बड़ी है (अधिकतम 6 MB)।",
-    "errUpload": "अपलोड नहीं हो सका। कृपया फिर कोशिश करें।",
-    "errImageSmall": "इमेज JPG, PNG या WebP होनी चाहिए और कम से कम 200 px की।",
-    "errImageRead": "यह फ़ाइल इमेज के रूप में पढ़ी नहीं जा सकी।",
-    "errTimes": "शुरू और अंत का समय जाँचें। मिनट और सेकंड में लिखें, जैसे 1:05।",
-    "errEndAfterStart": "अंत का समय शुरू के समय के बाद का होना चाहिए।",
-    "errStartPastEnd": "शुरू का समय गाने के अंत से आगे है।",
-    "cancelled": "डाउनलोड रद्द किया गया।",
-    "errStart": "डाउनलोड शुरू नहीं हो सका। कृपया फिर कोशिश करें।",
-    "errConvert": "कन्वर्ट नहीं हो सका। कृपया फिर कोशिश करें।",
-    "errSlow": "इसमें बहुत समय लग रहा है। कृपया फिर कोशिश करें।",
-    "errGeneric": "कुछ गड़बड़ हो गई। कृपया फिर कोशिश करें।",
-    "errBusy": "कन्वर्टर अभी व्यस्त है। कुछ सेकंड बाद फिर कोशिश करें।",
-    "errBlocked": "YouTube अभी सर्वर को ब्लॉक कर रहा है। कृपया थोड़ी देर बाद फिर कोशिश करें।",
-    "errUnavailable": "यह वीडियो डाउनलोड के लिए उपलब्ध नहीं है।",
-    "errTooMany": "बहुत ज़्यादा अपलोड हो गए हैं। कृपया कुछ मिनट रुकें।",
-    "language": "भाषा",
-    "lightMode": "लाइट मोड पर जाएँ",
-    "darkMode": "डार्क मोड पर जाएँ"
+  hi: {
+    brandTagline: "सरल · तेज़ · सुंदर",
+    statusPill: "कन्वर्ट करने के लिए तैयार",
+    badge: "मुफ़्त · साइन-अप की ज़रूरत नहीं",
+    heroLine1: "आपका संगीत।",
+    heroLine2: "आपका MP3।",
+    heroSub:
+      "YouTube लिंक पेस्ट करें और उसे आर्टवर्क, टाइटल, कलाकार और एल्बम की जानकारी के साथ एक बढ़िया MP3 में बदलें, जो आपकी म्यूज़िक लाइब्रेरी के लिए तैयार हो।",
+    linkLabel: "YouTube लिंक",
+    placeholder: "अपना YouTube लिंक यहाँ पेस्ट करें…",
+    paste: "पेस्ट",
+    finding: "खोज रहे हैं",
+    findSong: "गाना खोजें",
+    pillCover: "कवर आर्टवर्क",
+    pillTags: "म्यूज़िक टैग",
+    pillQuality: "128 / 320 kbps",
+    pillShorts: "Shorts समर्थित",
+    tryAgain: "फिर कोशिश करें",
+    ready: "तैयार",
+    unknownArtist: "अज्ञात कलाकार",
+    lookingUp: "एल्बम और क्रेडिट खोजे जा रहे हैं…",
+    musicBy: "संगीत:",
+    editTags: "टैग बदलें",
+    doneEditing: "बदलाव पूरा",
+    resetDetected: "पहचाने गए मान पर लौटें",
+    editHint:
+      "ये मान MP3 में लिखे जाएँगे। पहचाना गया मान रखने के लिए खाना खाली छोड़ें।",
+    coverArt: "कवर आर्ट",
+    replaceImage: "अपनी इमेज बदलें",
+    audioOptions: "ऑडियो विकल्प",
+    evenVolume: "आवाज़ बराबर करें",
+    evenVolumeHint:
+      "लाउडनेस को सामान्य करता है ताकि सभी गाने लगभग एक जैसी आवाज़ में बजें।",
+    startAt: "शुरू",
+    endAt: "अंत",
+    trimHint:
+      "शुरुआत या अंत काटें। मिनट और सेकंड में लिखें, जैसे 1:05। पूरा गाना रखने के लिए दोनों खाली छोड़ें।",
+    audioQuality: "ऑडियो क्वालिटी",
+    qualityHint: "फ़ाइल साइज़ और क्वालिटी के बीच संतुलन चुनें।",
+    cancel: "रद्द करें",
+    downloadMp3: "MP3 डाउनलोड करें",
+    mp3Ready: "आपका MP3 तैयार है",
+    readyHelp:
+      "अगर डाउनलोड शुरू नहीं हुआ, तो MP3 सेव करें पर टैप करें। iPhone या iPad पर डाउनलोड चुनें, या शेयर करके 'Files में सेव करें' चुनें।",
+    saveMp3: "MP3 सेव करें",
+    convertAnother: "दूसरा गाना बदलें",
+    footer: "आपकी म्यूज़िक लाइब्रेरी के लिए",
+    selected: "चुना गया",
+    mp3Audio: "MP3 ऑडियो",
+    noteSmaller: "छोटी फ़ाइल",
+    noteHigher: "बेहतर क्वालिटी",
+    badgeLight: "हल्का",
+    badgeHifi: "Hi-Fi",
+    fieldTitle: "शीर्षक",
+    fieldArtist: "कलाकार",
+    fieldAlbum: "एल्बम / फ़िल्म",
+    fieldYear: "वर्ष",
+    fieldGenre: "शैली",
+    fieldComposer: "संगीतकार",
+    coverAuto: "स्वचालित",
+    coverApple: "Apple Music",
+    coverYoutube: "YouTube थंबनेल",
+    coverCustom: "आपकी इमेज",
+    subBest: "सबसे अच्छा उपलब्ध",
+    subOfficial: "आधिकारिक आर्ट",
+    subNoMatch: "कोई मिलान नहीं",
+    subThumb: "वीडियो थंबनेल",
+    upload: "अपलोड",
+    uploading: "अपलोड हो रहा है…",
+    subTypes: "JPG, PNG या WebP",
+    sumEven: "बराबर आवाज़",
+    sumTrimmed: "ट्रिम किया",
+    sumOriginal: "मूल",
+    stepPrepare: "तैयारी",
+    stepConvert: "कन्वर्ट",
+    stepSave: "सेव",
+    preparing: "तैयारी",
+    converting: "कन्वर्ट हो रहा है",
+    statusPreparing:
+      "YouTube से जुड़ रहे हैं। पहली बार में थोड़ा समय लग सकता है।",
+    statusConverting:
+      "ऑडियो कन्वर्ट हो रहा है और आर्टवर्क व टैग जोड़े जा रहे हैं।",
+    errPaste: "जारी रखने के लिए YouTube लिंक पेस्ट करें।",
+    errNotYoutube:
+      "यह YouTube लिंक जैसा नहीं लग रहा। इसे एड्रेस बार या Share बटन से कॉपी करें।",
+    errLoadVideo: "यह वीडियो लोड नहीं हो सका। लिंक जाँचें और फिर कोशिश करें।",
+    errClipboardEmpty: "आपके क्लिपबोर्ड में कोई लिंक नहीं है।",
+    errClipboard: "क्लिपबोर्ड पढ़ा नहीं जा सका। लिंक को बॉक्स में पेस्ट करें।",
+    errImageType: "JPG, PNG या WebP इमेज इस्तेमाल करें।",
+    errImageSize: "यह इमेज बहुत बड़ी है (अधिकतम 6 MB)।",
+    errUpload: "अपलोड नहीं हो सका। कृपया फिर कोशिश करें।",
+    errImageSmall: "इमेज JPG, PNG या WebP होनी चाहिए और कम से कम 200 px की।",
+    errImageRead: "यह फ़ाइल इमेज के रूप में पढ़ी नहीं जा सकी।",
+    errTimes: "शुरू और अंत का समय जाँचें। मिनट और सेकंड में लिखें, जैसे 1:05।",
+    errEndAfterStart: "अंत का समय शुरू के समय के बाद का होना चाहिए।",
+    errStartPastEnd: "शुरू का समय गाने के अंत से आगे है।",
+    cancelled: "डाउनलोड रद्द किया गया।",
+    errStart: "डाउनलोड शुरू नहीं हो सका। कृपया फिर कोशिश करें।",
+    errConvert: "कन्वर्ट नहीं हो सका। कृपया फिर कोशिश करें।",
+    errSlow: "इसमें बहुत समय लग रहा है। कृपया फिर कोशिश करें।",
+    errGeneric: "कुछ गड़बड़ हो गई। कृपया फिर कोशिश करें।",
+    errBusy: "कन्वर्टर अभी व्यस्त है। कुछ सेकंड बाद फिर कोशिश करें।",
+    errBlocked:
+      "YouTube अभी सर्वर को ब्लॉक कर रहा है। कृपया थोड़ी देर बाद फिर कोशिश करें।",
+    errUnavailable: "यह वीडियो डाउनलोड के लिए उपलब्ध नहीं है।",
+    errTooMany: "बहुत ज़्यादा अपलोड हो गए हैं। कृपया कुछ मिनट रुकें।",
+    language: "भाषा",
+    lightMode: "लाइट मोड पर जाएँ",
+    darkMode: "डार्क मोड पर जाएँ",
   },
-  "gu": {
-    "brandTagline": "સરળ · ઝડપી · સુંદર",
-    "statusPill": "કન્વર્ટ કરવા તૈયાર",
-    "badge": "મફત · સાઇન-અપની જરૂર નથી",
-    "heroLine1": "તમારું સંગીત.",
-    "heroLine2": "તમારું MP3.",
-    "heroSub": "YouTube લિંક પેસ્ટ કરો અને તેને આર્ટવર્ક, ટાઇટલ, કલાકાર અને આલ્બમની માહિતી સાથે સરસ MP3 માં ફેરવો, જે તમારી મ્યુઝિક લાઇબ્રેરી માટે તૈયાર હોય.",
-    "linkLabel": "YouTube લિંક",
-    "placeholder": "તમારી YouTube લિંક અહીં પેસ્ટ કરો…",
-    "paste": "પેસ્ટ",
-    "finding": "શોધી રહ્યા છીએ",
-    "findSong": "ગીત શોધો",
-    "pillCover": "કવર આર્ટવર્ક",
-    "pillTags": "મ્યુઝિક ટૅગ",
-    "pillQuality": "128 / 320 kbps",
-    "pillShorts": "Shorts સપોર્ટેડ",
-    "tryAgain": "ફરી પ્રયાસ કરો",
-    "ready": "તૈયાર",
-    "unknownArtist": "અજાણ્યા કલાકાર",
-    "lookingUp": "આલ્બમ અને ક્રેડિટ શોધી રહ્યા છીએ…",
-    "musicBy": "સંગીત:",
-    "editTags": "ટૅગ બદલો",
-    "doneEditing": "ફેરફાર પૂરો",
-    "resetDetected": "ઓળખાયેલી કિંમત પર પાછા જાઓ",
-    "editHint": "આ કિંમતો MP3 માં લખાશે. ઓળખાયેલી કિંમત રાખવા માટે ખાનું ખાલી રાખો.",
-    "coverArt": "કવર આર્ટ",
-    "replaceImage": "તમારી ઇમેજ બદલો",
-    "audioOptions": "ઑડિયો વિકલ્પો",
-    "evenVolume": "અવાજ સરખો કરો",
-    "evenVolumeHint": "લાઉડનેસ સામાન્ય કરે છે, જેથી બધાં ગીતો લગભગ સરખા અવાજે વાગે.",
-    "startAt": "શરૂઆત",
-    "endAt": "અંત",
-    "trimHint": "શરૂઆત અથવા અંત કાપો. મિનિટ અને સેકન્ડમાં લખો, જેમ કે 1:05. આખું ગીત રાખવા બંને ખાલી રાખો.",
-    "audioQuality": "ઑડિયો ક્વોલિટી",
-    "qualityHint": "ફાઇલ સાઇઝ અને ક્વોલિટી વચ્ચે સંતુલન પસંદ કરો.",
-    "cancel": "રદ કરો",
-    "downloadMp3": "MP3 ડાઉનલોડ કરો",
-    "mp3Ready": "તમારું MP3 તૈયાર છે",
-    "readyHelp": "જો ડાઉનલોડ શરૂ ન થાય, તો MP3 સેવ કરો પર ટૅપ કરો. iPhone અથવા iPad પર ડાઉનલોડ પસંદ કરો, અથવા શેર કરીને 'Files માં સેવ કરો' પસંદ કરો.",
-    "saveMp3": "MP3 સેવ કરો",
-    "convertAnother": "બીજું ગીત કન્વર્ટ કરો",
-    "footer": "તમારી મ્યુઝિક લાઇબ્રેરી માટે",
-    "selected": "પસંદ કરેલ",
-    "mp3Audio": "MP3 ઑડિયો",
-    "noteSmaller": "નાની ફાઇલ",
-    "noteHigher": "વધુ સારી ક્વોલિટી",
-    "badgeLight": "હળવું",
-    "badgeHifi": "Hi-Fi",
-    "fieldTitle": "શીર્ષક",
-    "fieldArtist": "કલાકાર",
-    "fieldAlbum": "આલ્બમ / ફિલ્મ",
-    "fieldYear": "વર્ષ",
-    "fieldGenre": "શૈલી",
-    "fieldComposer": "સંગીતકાર",
-    "coverAuto": "આપમેળે",
-    "coverApple": "Apple Music",
-    "coverYoutube": "YouTube થંબનેલ",
-    "coverCustom": "તમારી ઇમેજ",
-    "subBest": "શ્રેષ્ઠ ઉપલબ્ધ",
-    "subOfficial": "સત્તાવાર આર્ટ",
-    "subNoMatch": "કોઈ મેળ મળ્યો નથી",
-    "subThumb": "વિડિયો થંબનેલ",
-    "upload": "અપલોડ",
-    "uploading": "અપલોડ થઈ રહ્યું છે…",
-    "subTypes": "JPG, PNG અથવા WebP",
-    "sumEven": "સરખો અવાજ",
-    "sumTrimmed": "ટ્રિમ કર્યું",
-    "sumOriginal": "મૂળ",
-    "stepPrepare": "તૈયારી",
-    "stepConvert": "કન્વર્ટ",
-    "stepSave": "સેવ",
-    "preparing": "તૈયારી",
-    "converting": "કન્વર્ટ થઈ રહ્યું છે",
-    "statusPreparing": "YouTube સાથે જોડાઈ રહ્યા છીએ. પહેલી વાર થોડો વધુ સમય લાગી શકે છે.",
-    "statusConverting": "ઑડિયો કન્વર્ટ થઈ રહ્યો છે અને આર્ટવર્ક તથા ટૅગ ઉમેરાઈ રહ્યા છે.",
-    "errPaste": "આગળ વધવા માટે YouTube લિંક પેસ્ટ કરો.",
-    "errNotYoutube": "આ YouTube લિંક જેવી લાગતી નથી. તેને એડ્રેસ બાર અથવા Share બટનમાંથી કૉપી કરો.",
-    "errLoadVideo": "આ વિડિયો લોડ થઈ શક્યો નહીં. લિંક તપાસો અને ફરી પ્રયાસ કરો.",
-    "errClipboardEmpty": "તમારા ક્લિપબોર્ડમાં કોઈ લિંક નથી.",
-    "errClipboard": "ક્લિપબોર્ડ વાંચી શકાયું નહીં. લિંકને બૉક્સમાં પેસ્ટ કરો.",
-    "errImageType": "JPG, PNG અથવા WebP ઇમેજ વાપરો.",
-    "errImageSize": "આ ઇમેજ ખૂબ મોટી છે (વધુમાં વધુ 6 MB).",
-    "errUpload": "અપલોડ નિષ્ફળ ગયું. કૃપા કરીને ફરી પ્રયાસ કરો.",
-    "errImageSmall": "ઇમેજ JPG, PNG અથવા WebP હોવી જોઈએ અને ઓછામાં ઓછી 200 px ની.",
-    "errImageRead": "આ ફાઇલ ઇમેજ તરીકે વાંચી શકાઈ નહીં.",
-    "errTimes": "શરૂઆત અને અંતનો સમય તપાસો. મિનિટ અને સેકન્ડમાં લખો, જેમ કે 1:05.",
-    "errEndAfterStart": "અંતનો સમય શરૂઆતના સમય પછીનો હોવો જોઈએ.",
-    "errStartPastEnd": "શરૂઆતનો સમય ગીતના અંતથી આગળ છે.",
-    "cancelled": "ડાઉનલોડ રદ કરાયું.",
-    "errStart": "ડાઉનલોડ શરૂ થઈ શક્યું નહીં. કૃપા કરીને ફરી પ્રયાસ કરો.",
-    "errConvert": "કન્વર્ટ થઈ શક્યું નહીં. કૃપા કરીને ફરી પ્રયાસ કરો.",
-    "errSlow": "આમાં ખૂબ સમય લાગી રહ્યો છે. કૃપા કરીને ફરી પ્રયાસ કરો.",
-    "errGeneric": "કંઈક ખોટું થયું. કૃપા કરીને ફરી પ્રયાસ કરો.",
-    "errBusy": "કન્વર્ટર હાલમાં વ્યસ્ત છે. થોડી સેકન્ડ પછી ફરી પ્રયાસ કરો.",
-    "errBlocked": "YouTube હાલમાં સર્વરને બ્લૉક કરી રહ્યું છે. કૃપા કરીને થોડી વાર પછી ફરી પ્રયાસ કરો.",
-    "errUnavailable": "આ વિડિયો ડાઉનલોડ માટે ઉપલબ્ધ નથી.",
-    "errTooMany": "ઘણા બધા અપલોડ થઈ ગયા છે. કૃપા કરીને થોડી મિનિટ રાહ જુઓ.",
-    "language": "ભાષા",
-    "lightMode": "લાઇટ મોડ પર જાઓ",
-    "darkMode": "ડાર્ક મોડ પર જાઓ"
-  }
+  gu: {
+    brandTagline: "સરળ · ઝડપી · સુંદર",
+    statusPill: "કન્વર્ટ કરવા તૈયાર",
+    badge: "મફત · સાઇન-અપની જરૂર નથી",
+    heroLine1: "તમારું સંગીત.",
+    heroLine2: "તમારું MP3.",
+    heroSub:
+      "YouTube લિંક પેસ્ટ કરો અને તેને આર્ટવર્ક, ટાઇટલ, કલાકાર અને આલ્બમની માહિતી સાથે સરસ MP3 માં ફેરવો, જે તમારી મ્યુઝિક લાઇબ્રેરી માટે તૈયાર હોય.",
+    linkLabel: "YouTube લિંક",
+    placeholder: "તમારી YouTube લિંક અહીં પેસ્ટ કરો…",
+    paste: "પેસ્ટ",
+    finding: "શોધી રહ્યા છીએ",
+    findSong: "ગીત શોધો",
+    pillCover: "કવર આર્ટવર્ક",
+    pillTags: "મ્યુઝિક ટૅગ",
+    pillQuality: "128 / 320 kbps",
+    pillShorts: "Shorts સપોર્ટેડ",
+    tryAgain: "ફરી પ્રયાસ કરો",
+    ready: "તૈયાર",
+    unknownArtist: "અજાણ્યા કલાકાર",
+    lookingUp: "આલ્બમ અને ક્રેડિટ શોધી રહ્યા છીએ…",
+    musicBy: "સંગીત:",
+    editTags: "ટૅગ બદલો",
+    doneEditing: "ફેરફાર પૂરો",
+    resetDetected: "ઓળખાયેલી કિંમત પર પાછા જાઓ",
+    editHint:
+      "આ કિંમતો MP3 માં લખાશે. ઓળખાયેલી કિંમત રાખવા માટે ખાનું ખાલી રાખો.",
+    coverArt: "કવર આર્ટ",
+    replaceImage: "તમારી ઇમેજ બદલો",
+    audioOptions: "ઑડિયો વિકલ્પો",
+    evenVolume: "અવાજ સરખો કરો",
+    evenVolumeHint:
+      "લાઉડનેસ સામાન્ય કરે છે, જેથી બધાં ગીતો લગભગ સરખા અવાજે વાગે.",
+    startAt: "શરૂઆત",
+    endAt: "અંત",
+    trimHint:
+      "શરૂઆત અથવા અંત કાપો. મિનિટ અને સેકન્ડમાં લખો, જેમ કે 1:05. આખું ગીત રાખવા બંને ખાલી રાખો.",
+    audioQuality: "ઑડિયો ક્વોલિટી",
+    qualityHint: "ફાઇલ સાઇઝ અને ક્વોલિટી વચ્ચે સંતુલન પસંદ કરો.",
+    cancel: "રદ કરો",
+    downloadMp3: "MP3 ડાઉનલોડ કરો",
+    mp3Ready: "તમારું MP3 તૈયાર છે",
+    readyHelp:
+      "જો ડાઉનલોડ શરૂ ન થાય, તો MP3 સેવ કરો પર ટૅપ કરો. iPhone અથવા iPad પર ડાઉનલોડ પસંદ કરો, અથવા શેર કરીને 'Files માં સેવ કરો' પસંદ કરો.",
+    saveMp3: "MP3 સેવ કરો",
+    convertAnother: "બીજું ગીત કન્વર્ટ કરો",
+    footer: "તમારી મ્યુઝિક લાઇબ્રેરી માટે",
+    selected: "પસંદ કરેલ",
+    mp3Audio: "MP3 ઑડિયો",
+    noteSmaller: "નાની ફાઇલ",
+    noteHigher: "વધુ સારી ક્વોલિટી",
+    badgeLight: "હળવું",
+    badgeHifi: "Hi-Fi",
+    fieldTitle: "શીર્ષક",
+    fieldArtist: "કલાકાર",
+    fieldAlbum: "આલ્બમ / ફિલ્મ",
+    fieldYear: "વર્ષ",
+    fieldGenre: "શૈલી",
+    fieldComposer: "સંગીતકાર",
+    coverAuto: "આપમેળે",
+    coverApple: "Apple Music",
+    coverYoutube: "YouTube થંબનેલ",
+    coverCustom: "તમારી ઇમેજ",
+    subBest: "શ્રેષ્ઠ ઉપલબ્ધ",
+    subOfficial: "સત્તાવાર આર્ટ",
+    subNoMatch: "કોઈ મેળ મળ્યો નથી",
+    subThumb: "વિડિયો થંબનેલ",
+    upload: "અપલોડ",
+    uploading: "અપલોડ થઈ રહ્યું છે…",
+    subTypes: "JPG, PNG અથવા WebP",
+    sumEven: "સરખો અવાજ",
+    sumTrimmed: "ટ્રિમ કર્યું",
+    sumOriginal: "મૂળ",
+    stepPrepare: "તૈયારી",
+    stepConvert: "કન્વર્ટ",
+    stepSave: "સેવ",
+    preparing: "તૈયારી",
+    converting: "કન્વર્ટ થઈ રહ્યું છે",
+    statusPreparing:
+      "YouTube સાથે જોડાઈ રહ્યા છીએ. પહેલી વાર થોડો વધુ સમય લાગી શકે છે.",
+    statusConverting:
+      "ઑડિયો કન્વર્ટ થઈ રહ્યો છે અને આર્ટવર્ક તથા ટૅગ ઉમેરાઈ રહ્યા છે.",
+    errPaste: "આગળ વધવા માટે YouTube લિંક પેસ્ટ કરો.",
+    errNotYoutube:
+      "આ YouTube લિંક જેવી લાગતી નથી. તેને એડ્રેસ બાર અથવા Share બટનમાંથી કૉપી કરો.",
+    errLoadVideo: "આ વિડિયો લોડ થઈ શક્યો નહીં. લિંક તપાસો અને ફરી પ્રયાસ કરો.",
+    errClipboardEmpty: "તમારા ક્લિપબોર્ડમાં કોઈ લિંક નથી.",
+    errClipboard: "ક્લિપબોર્ડ વાંચી શકાયું નહીં. લિંકને બૉક્સમાં પેસ્ટ કરો.",
+    errImageType: "JPG, PNG અથવા WebP ઇમેજ વાપરો.",
+    errImageSize: "આ ઇમેજ ખૂબ મોટી છે (વધુમાં વધુ 6 MB).",
+    errUpload: "અપલોડ નિષ્ફળ ગયું. કૃપા કરીને ફરી પ્રયાસ કરો.",
+    errImageSmall:
+      "ઇમેજ JPG, PNG અથવા WebP હોવી જોઈએ અને ઓછામાં ઓછી 200 px ની.",
+    errImageRead: "આ ફાઇલ ઇમેજ તરીકે વાંચી શકાઈ નહીં.",
+    errTimes:
+      "શરૂઆત અને અંતનો સમય તપાસો. મિનિટ અને સેકન્ડમાં લખો, જેમ કે 1:05.",
+    errEndAfterStart: "અંતનો સમય શરૂઆતના સમય પછીનો હોવો જોઈએ.",
+    errStartPastEnd: "શરૂઆતનો સમય ગીતના અંતથી આગળ છે.",
+    cancelled: "ડાઉનલોડ રદ કરાયું.",
+    errStart: "ડાઉનલોડ શરૂ થઈ શક્યું નહીં. કૃપા કરીને ફરી પ્રયાસ કરો.",
+    errConvert: "કન્વર્ટ થઈ શક્યું નહીં. કૃપા કરીને ફરી પ્રયાસ કરો.",
+    errSlow: "આમાં ખૂબ સમય લાગી રહ્યો છે. કૃપા કરીને ફરી પ્રયાસ કરો.",
+    errGeneric: "કંઈક ખોટું થયું. કૃપા કરીને ફરી પ્રયાસ કરો.",
+    errBusy: "કન્વર્ટર હાલમાં વ્યસ્ત છે. થોડી સેકન્ડ પછી ફરી પ્રયાસ કરો.",
+    errBlocked:
+      "YouTube હાલમાં સર્વરને બ્લૉક કરી રહ્યું છે. કૃપા કરીને થોડી વાર પછી ફરી પ્રયાસ કરો.",
+    errUnavailable: "આ વિડિયો ડાઉનલોડ માટે ઉપલબ્ધ નથી.",
+    errTooMany: "ઘણા બધા અપલોડ થઈ ગયા છે. કૃપા કરીને થોડી મિનિટ રાહ જુઓ.",
+    language: "ભાષા",
+    lightMode: "લાઇટ મોડ પર જાઓ",
+    darkMode: "ડાર્ક મોડ પર જાઓ",
+  },
 };
 
 const LANGUAGES = [
@@ -392,7 +443,10 @@ const SERVER_MESSAGES = [
   [/Something went wrong/i, "errGeneric"],
 ];
 
-const I18nContext = createContext({ t: (key) => STRINGS.en[key] || key, lang: "en" });
+const I18nContext = createContext({
+  t: (key) => STRINGS.en[key] || key,
+  lang: "en",
+});
 const useT = () => useContext(I18nContext);
 
 const EXTRA_CSS = String.raw`
@@ -605,7 +659,13 @@ const Logo = ({ size = 42 }) => (
     className="relative shrink-0 overflow-hidden rounded-[15px] shadow-[0_10px_30px_rgba(236,72,153,0.22)]"
     style={{ width: size, height: size }}
   >
-    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" className="relative z-10">
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      aria-hidden="true"
+      className="relative z-10"
+    >
       <defs>
         <linearGradient id="logo-main" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#ef4444" />
@@ -619,8 +679,24 @@ const Logo = ({ size = 42 }) => (
         </linearGradient>
       </defs>
       <rect x="2" y="2" width="60" height="60" rx="17" fill="url(#logo-main)" />
-      <rect x="2" y="2" width="60" height="30" rx="17" fill="url(#logo-light)" />
-      <rect x="3" y="3" width="58" height="58" rx="16" fill="none" stroke="white" strokeOpacity=".5" />
+      <rect
+        x="2"
+        y="2"
+        width="60"
+        height="30"
+        rx="17"
+        fill="url(#logo-light)"
+      />
+      <rect
+        x="3"
+        y="3"
+        width="58"
+        height="58"
+        rx="16"
+        fill="none"
+        stroke="white"
+        strokeOpacity=".5"
+      />
       <path
         d="M27 17v27.5c0 3.8-3.4 6.5-7 6.5-3.3 0-5.5-1.7-5.5-4.3 0-3.1 2.9-5.4 6.8-5.4 1.2 0 2.2.2 3.2.6V20.2l20-4.2v20.5c0 3.8-3.4 6.5-7 6.5-3.3 0-5.5-1.7-5.5-4.3 0-3.1 2.9-5.4 6.8-5.4 1.2 0 2.2.2 3.2.6V22l-15 3.2V17h-5Z"
         fill="white"
@@ -634,7 +710,9 @@ const Logo = ({ size = 42 }) => (
 /* -------------------------------------------------------------------------- */
 
 const Spinner = ({ className = "h-4 w-4" }) => (
-  <span className={`inline-block animate-spin rounded-full border-2 border-current/25 border-t-current ${className}`} />
+  <span
+    className={`inline-block animate-spin rounded-full border-2 border-current/25 border-t-current ${className}`}
+  />
 );
 
 function FeaturePill({ children }) {
@@ -650,7 +728,10 @@ function FeaturePill({ children }) {
 
 function SongSkeleton() {
   return (
-    <div className={`${glass} mx-auto mt-8 max-w-3xl overflow-hidden rounded-[32px] p-5`} aria-hidden="true">
+    <div
+      className={`${glass} mx-auto mt-8 max-w-3xl overflow-hidden rounded-[32px] p-5`}
+      aria-hidden="true"
+    >
       <div className="flex flex-col gap-6 sm:flex-row">
         <div className="mx-auto h-56 w-56 shrink-0 animate-pulse rounded-[26px] bg-slate-200/70 sm:mx-0" />
         <div className="flex flex-1 flex-col justify-center space-y-4">
@@ -691,7 +772,9 @@ function QualityCard({ quality, active, busy, onChange }) {
       <div className="relative flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className={`text-base font-black ${active ? "text-pink-600" : "text-slate-800"}`}>
+            <span
+              className={`text-base font-black ${active ? "text-pink-600" : "text-slate-800"}`}
+            >
               {quality.title}
             </span>
             {active && (
@@ -700,7 +783,9 @@ function QualityCard({ quality, active, busy, onChange }) {
               </span>
             )}
           </div>
-          <p className="mt-1 text-xs font-medium text-slate-400">{t(quality.noteKey)}</p>
+          <p className="mt-1 text-xs font-medium text-slate-400">
+            {t(quality.noteKey)}
+          </p>
         </div>
 
         <span
@@ -715,7 +800,9 @@ function QualityCard({ quality, active, busy, onChange }) {
       </div>
 
       <div className="relative mt-4 flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">{t("mp3Audio")}</span>
+        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+          {t("mp3Audio")}
+        </span>
         <span
           className={`rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-wider ${
             active ? "bg-white/80 text-pink-500" : "bg-slate-100 text-slate-400"
@@ -752,7 +839,11 @@ function Stepper({ currentStep }) {
               </span>
               <span
                 className={`hidden text-[11px] font-bold sm:block ${
-                  active ? "text-slate-800" : complete ? "text-emerald-600" : "text-slate-400"
+                  active
+                    ? "text-slate-800"
+                    : complete
+                      ? "text-emerald-600"
+                      : "text-slate-400"
                 }`}
               >
                 {t(label)}
@@ -760,7 +851,9 @@ function Stepper({ currentStep }) {
             </div>
 
             {index < STEPS.length - 1 && (
-              <div className={`mx-2 h-px flex-1 transition-colors ${index < currentStep ? "bg-emerald-300" : "bg-slate-200"}`} />
+              <div
+                className={`mx-2 h-px flex-1 transition-colors ${index < currentStep ? "bg-emerald-300" : "bg-slate-200"}`}
+              />
             )}
           </li>
         );
@@ -778,7 +871,9 @@ function Visualizer({ active = false }) {
           className={`w-[3px] rounded-full transition-all ${active ? gradient : "bg-slate-300"}`}
           style={{
             height: `${Math.max(6, height * 22)}px`,
-            animation: active ? `musicBar ${0.7 + index * 0.08}s ease-in-out infinite alternate` : "none",
+            animation: active
+              ? `musicBar ${0.7 + index * 0.08}s ease-in-out infinite alternate`
+              : "none",
           }}
         />
       ))}
@@ -814,18 +909,28 @@ function CoverTile({ active, disabled, label, sub, img, onClick, children }) {
             }}
           />
         ) : (
-          <span className="flex h-full w-full items-center justify-center text-pink-400">{children}</span>
+          <span className="flex h-full w-full items-center justify-center text-pink-400">
+            {children}
+          </span>
         )}
       </span>
-      <span className={`mt-2 block text-[11px] font-black ${active ? "text-pink-600" : "text-slate-700"}`}>{label}</span>
-      <span className="block text-[10px] font-medium text-slate-400">{sub}</span>
+      <span
+        className={`mt-2 block text-[11px] font-black ${active ? "text-pink-600" : "text-slate-700"}`}
+      >
+        {label}
+      </span>
+      <span className="block text-[10px] font-medium text-slate-400">
+        {sub}
+      </span>
     </button>
   );
 }
 
 export default function App() {
   const [url, setUrl] = useState("");
-  const [quality, setQuality] = useState(() => localStorage.getItem("quality") || "128");
+  const [quality, setQuality] = useState(
+    () => localStorage.getItem("quality") || "128",
+  );
 
   const [song, setSong] = useState(EMPTY_SONG);
   const [error, setError] = useState("");
@@ -852,7 +957,9 @@ export default function App() {
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("theme");
     if (saved === "dark" || saved === "light") return saved;
-    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   });
 
   const t = (key) => STRINGS[lang]?.[key] ?? STRINGS.en[key] ?? key;
@@ -870,7 +977,8 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem("theme", theme);
-    document.documentElement.style.backgroundColor = theme === "dark" ? "#0b0b14" : "#f7f7fb";
+    document.documentElement.style.backgroundColor =
+      theme === "dark" ? "#0b0b14" : "#f7f7fb";
     document.documentElement.style.colorScheme = theme;
   }, [theme]);
 
@@ -907,7 +1015,9 @@ export default function App() {
 
     const tick = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/status/${downloadId}`, { cache: "no-store" });
+        const res = await fetch(`${API_URL}/api/status/${downloadId}`, {
+          cache: "no-store",
+        });
         const data = await res.json();
         if (stopped) return;
 
@@ -955,7 +1065,10 @@ export default function App() {
 
   // Starts the browser's normal download from a real URL (works in Safari and in-app browsers)
   const saveFile = (fileUrl) => {
-    const a = Object.assign(document.createElement("a"), { href: fileUrl, rel: "noopener" });
+    const a = Object.assign(document.createElement("a"), {
+      href: fileUrl,
+      rel: "noopener",
+    });
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1110,14 +1223,25 @@ export default function App() {
         body: file,
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Upload failed. Please try again.");
+      if (!res.ok)
+        throw new Error(data.error || "Upload failed. Please try again.");
 
       setCover((c) => {
         if (c.preview) URL.revokeObjectURL(c.preview);
-        return { source: "custom", coverId: data.coverId, preview: URL.createObjectURL(file), uploading: false, error: "" };
+        return {
+          source: "custom",
+          coverId: data.coverId,
+          preview: URL.createObjectURL(file),
+          uploading: false,
+          error: "",
+        };
       });
     } catch (err) {
-      setCover((c) => ({ ...c, uploading: false, error: localize(err.message) || t("errUpload") }));
+      setCover((c) => ({
+        ...c,
+        uploading: false,
+        error: localize(err.message) || t("errUpload"),
+      }));
     }
   };
 
@@ -1215,7 +1339,12 @@ export default function App() {
 
   const view = { ...song };
   const audioSummary =
-    [audio.normalize && t("sumEven"), (audio.start || audio.end) && t("sumTrimmed")].filter(Boolean).join(" · ") || t("sumOriginal");
+    [
+      audio.normalize && t("sumEven"),
+      (audio.start || audio.end) && t("sumTrimmed"),
+    ]
+      .filter(Boolean)
+      .join(" · ") || t("sumOriginal");
   for (const [key, value] of Object.entries(edits)) {
     if (String(value || "").trim()) view[key] = String(value).trim();
   }
@@ -1231,13 +1360,13 @@ export default function App() {
 
   return (
     <I18nContext.Provider value={{ t, lang }}>
-    <div
-      className={`relative min-h-screen overflow-x-hidden bg-[#f7f7fb] text-slate-900 antialiased ${
-        theme === "dark" ? "theme-dark" : ""
-      } ${lang !== "en" ? "lang-indic" : ""}`}
-    >
-      <style>{EXTRA_CSS}</style>
-      <style>{`
+      <div
+        className={`relative min-h-screen overflow-x-hidden bg-[#f7f7fb] text-slate-900 antialiased ${
+          theme === "dark" ? "theme-dark" : ""
+        } ${lang !== "en" ? "lang-indic" : ""}`}
+      >
+        <style>{EXTRA_CSS}</style>
+        <style>{`
         @keyframes drift {
           0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
           50% { transform: translate3d(35px, 25px, 0) scale(1.1); }
@@ -1266,650 +1395,746 @@ export default function App() {
         }
       `}</style>
 
-      {/* BACKGROUND */}
+        {/* BACKGROUND */}
 
-      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div
-          className="absolute -left-44 -top-48 h-[600px] w-[600px] rounded-full bg-red-300/30 blur-[145px]"
-          style={{ animation: "drift 18s ease-in-out infinite" }}
-        />
-        <div
-          className="absolute -right-48 top-10 h-[620px] w-[620px] rounded-full bg-purple-300/30 blur-[155px]"
-          style={{ animation: "drift 22s ease-in-out infinite reverse" }}
-        />
-        <div
-          className="absolute -bottom-60 left-[30%] h-[520px] w-[520px] rounded-full bg-pink-300/25 blur-[155px]"
-          style={{ animation: "drift 25s ease-in-out infinite" }}
-        />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,transparent_35%,#f7f7fb_100%)]" />
-        <div className="absolute inset-0 opacity-[0.035] [background-image:linear-gradient(#64748b_1px,transparent_1px),linear-gradient(90deg,#64748b_1px,transparent_1px)] [background-size:56px_56px]" />
-      </div>
-
-      {/* HEADER */}
-
-      <header className="sticky top-0 z-30 border-b border-white/70 bg-white/55 backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3.5">
-          <div className="flex items-center gap-3">
-            <Logo />
-            <div>
-              <div className="text-[15px] font-black tracking-tight sm:text-lg">
-                YouTube
-                <span className="bg-gradient-to-r from-pink-500 to-purple-500 bg-clip-text text-transparent">Audio</span>
-              </div>
-              <div className="hidden text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400 sm:block">
-                {t("brandTagline")}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-2 rounded-full border border-white bg-white/60 px-3.5 py-2 text-[10px] font-bold text-slate-500 shadow-sm sm:flex">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-              {t("statusPill")}
-            </div>
-
-            <label htmlFor="lang" className="sr-only">
-              {t("language")}
-            </label>
-            <select
-              id="lang"
-              value={lang}
-              onChange={(event) => setLang(event.target.value)}
-              className="h-9 cursor-pointer rounded-full border border-white bg-white/70 px-3 text-xs font-bold text-slate-600 shadow-sm outline-none transition hover:text-pink-500 focus:border-pink-200"
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-
-            <button
-              type="button"
-              onClick={() => setTheme((cur) => (cur === "dark" ? "light" : "dark"))}
-              aria-label={theme === "dark" ? t("lightMode") : t("darkMode")}
-              title={theme === "dark" ? t("lightMode") : t("darkMode")}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-white bg-white/70 text-slate-600 shadow-sm transition hover:text-pink-500"
-            >
-              {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* MAIN */}
-
-      <main className="mx-auto max-w-5xl px-5 pb-24">
-        {/* HERO */}
-
-        <section className="rise pt-14 text-center sm:pt-20">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/90 bg-white/65 px-4 py-2 text-[11px] font-bold text-slate-500 shadow-sm backdrop-blur-xl">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-purple-500 text-white">
-              <SparkleIcon size={11} />
-            </span>
-            {t("badge")}
-          </div>
-
-          <h1 className="mx-auto mt-6 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-0.055em] sm:text-6xl lg:text-7xl">
-            {t("heroLine1")}
-            <br />
-            <span className={`bg-clip-text text-transparent ${gradient}`}>{t("heroLine2")}</span>
-          </h1>
-
-          <p className="mx-auto mt-6 max-w-xl text-sm leading-7 text-slate-500 sm:text-base">
-            {t("heroSub")}
-          </p>
-        </section>
-
-        {/* URL INPUT */}
-
-        <section className="rise mx-auto mt-10 max-w-3xl [animation-delay:80ms]">
+        <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
           <div
-            className={`${glass} rounded-[30px] p-2.5 transition-all duration-300 focus-within:border-pink-300 focus-within:shadow-[0_0_0_5px_rgba(236,72,153,0.08),0_28px_80px_rgba(60,40,120,0.12)]`}
-          >
-            <div className="flex flex-col gap-2.5 sm:flex-row">
-              <div className="relative flex-1">
-                <label htmlFor="yt-url" className="sr-only">
-                  {t("linkLabel")}
-                </label>
+            className="absolute -left-44 -top-48 h-[600px] w-[600px] rounded-full bg-red-300/30 blur-[145px]"
+            style={{ animation: "drift 18s ease-in-out infinite" }}
+          />
+          <div
+            className="absolute -right-48 top-10 h-[620px] w-[620px] rounded-full bg-purple-300/30 blur-[155px]"
+            style={{ animation: "drift 22s ease-in-out infinite reverse" }}
+          />
+          <div
+            className="absolute -bottom-60 left-[30%] h-[520px] w-[520px] rounded-full bg-pink-300/25 blur-[155px]"
+            style={{ animation: "drift 25s ease-in-out infinite" }}
+          />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,transparent_35%,#f7f7fb_100%)]" />
+          <div className="absolute inset-0 opacity-[0.035] [background-image:linear-gradient(#64748b_1px,transparent_1px),linear-gradient(90deg,#64748b_1px,transparent_1px)] [background-size:56px_56px]" />
+        </div>
 
-                <div className="pointer-events-none absolute left-5 top-1/2 z-10 -translate-y-1/2 text-slate-400">
-                  <LinkIcon size={19} />
+        {/* HEADER */}
+
+        <header className="sticky top-0 z-30 border-b border-white/70 bg-white/55 backdrop-blur-2xl">
+          <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <Logo />
+              <div>
+                <div className="text-[15px] font-black tracking-tight sm:text-lg">
+                  YouTube
+                  <span className="bg-gradient-to-r from-pink-500 to-purple-500 bg-clip-text text-transparent">
+                    Audio
+                  </span>
                 </div>
-
-                <input
-                  id="yt-url"
-                  type="url"
-                  inputMode="url"
-                  autoComplete="off"
-                  value={url}
-                  onChange={handleChange}
-                  onPaste={handlePaste}
-                  onKeyDown={(event) => event.key === "Enter" && findSong()}
-                  placeholder={t("placeholder")}
-                  className="h-[62px] w-full rounded-[22px] border border-white bg-white/80 pl-12 pr-24 text-sm font-semibold text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-pink-200 focus:bg-white"
-                />
-
-                <button
-                  type="button"
-                  onClick={pasteFromClipboard}
-                  disabled={busy}
-                  className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-500 shadow-sm transition hover:border-pink-200 hover:text-pink-500 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <PasteIcon size={13} />
-                  {t("paste")}
-                </button>
+                <div className="hidden text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400 sm:block">
+                  {t("brandTagline")}
+                </div>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="hidden items-center gap-2 rounded-full border border-white bg-white/60 px-3.5 py-2 text-[10px] font-bold text-slate-500 shadow-sm sm:flex">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                {t("statusPill")}
+              </div>
+
+              <label htmlFor="lang" className="sr-only">
+                {t("language")}
+              </label>
+              <select
+                id="lang"
+                value={lang}
+                onChange={(event) => setLang(event.target.value)}
+                className="h-9 appearance-none cursor-pointer rounded-full border border-white bg-white/70 px-3 text-xs font-bold text-slate-600 shadow-sm outline-none transition hover:text-pink-500 focus:border-pink-200"
+              >
+                {LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
 
               <button
-                onClick={() => findSong()}
-                disabled={loadingSong || busy}
-                className={`group flex h-[62px] items-center justify-center gap-2 rounded-[22px] ${gradient} px-7 font-black text-white shadow-[0_12px_30px_rgba(236,72,153,0.24)] transition-all duration-300 hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[0_16px_36px_rgba(236,72,153,0.30)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60`}
+                type="button"
+                onClick={() =>
+                  setTheme((cur) => (cur === "dark" ? "light" : "dark"))
+                }
+                aria-label={theme === "dark" ? t("lightMode") : t("darkMode")}
+                title={theme === "dark" ? t("lightMode") : t("darkMode")}
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-white bg-white/70 text-slate-600 shadow-sm transition hover:text-pink-500"
               >
-                {loadingSong ? (
-                  <>
-                    <Spinner />
-                    {t("finding")}
-                  </>
-                ) : (
-                  <>
-                    {t("findSong")}
-                    <ArrowRightIcon size={17} className="transition-transform group-hover:translate-x-0.5" />
-                  </>
-                )}
+                {theme === "dark" ? <SunIcon /> : <MoonIcon />}
               </button>
             </div>
           </div>
+        </header>
 
-          {!song.title && !loadingSong && (
-            <div className="mt-5 flex flex-wrap justify-center gap-2">
-              <FeaturePill>{t("pillCover")}</FeaturePill>
-              <FeaturePill>{t("pillTags")}</FeaturePill>
-              <FeaturePill>{t("pillQuality")}</FeaturePill>
-              <FeaturePill>{t("pillShorts")}</FeaturePill>
+        {/* MAIN */}
+
+        <main className="mx-auto max-w-5xl px-5 pb-24">
+          {/* HERO */}
+
+          <section className="rise pt-14 text-center sm:pt-20">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/90 bg-white/65 px-4 py-2 text-[11px] font-bold text-slate-500 shadow-sm backdrop-blur-xl">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-purple-500 text-white">
+                <SparkleIcon size={11} />
+              </span>
+              {t("badge")}
             </div>
-          )}
 
-          {/* ERROR */}
+            <h1 className="mx-auto mt-6 max-w-4xl text-4xl font-black leading-[1.02] tracking-[-0.055em] sm:text-6xl lg:text-7xl">
+              {t("heroLine1")}
+              <br />
+              <span className={`bg-clip-text text-transparent ${gradient}`}>
+                {t("heroLine2")}
+              </span>
+            </h1>
 
-          <div aria-live="polite">
-            {error && (
-              <div
-                role="alert"
-                className="mt-4 flex items-start gap-3 rounded-[20px] border border-red-100 bg-red-50/80 px-4 py-3.5 text-sm font-medium text-red-600 shadow-sm"
-              >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-100 font-black text-red-500">
-                  !
-                </span>
+            <p className="mx-auto mt-6 max-w-xl text-sm leading-7 text-slate-500 sm:text-base">
+              {t("heroSub")}
+            </p>
+          </section>
 
-                <span className="flex-1 leading-6">{error}</span>
+          {/* URL INPUT */}
 
-                {song.title && !busy && (
-                  <button onClick={startDownload} className="shrink-0 font-black text-red-700 underline underline-offset-2">
-                    {t("tryAgain")}
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
+          <section className="rise mx-auto mt-10 max-w-3xl [animation-delay:80ms]">
+            <div
+              className={`${glass} rounded-[30px] p-2.5 transition-all duration-300 focus-within:border-pink-300 focus-within:shadow-[0_0_0_5px_rgba(236,72,153,0.08),0_28px_80px_rgba(60,40,120,0.12)]`}
+            >
+              <div className="flex flex-col gap-2.5 sm:flex-row">
+                <div className="relative flex-1">
+                  <label htmlFor="yt-url" className="sr-only">
+                    {t("linkLabel")}
+                  </label>
 
-        {loadingSong && !song.title && <SongSkeleton />}
-
-        {/* SONG CARD */}
-
-        {song.title && (
-          <section className={`${glass} rise relative mx-auto mt-8 max-w-3xl overflow-hidden rounded-[34px] p-4 sm:p-6`}>
-            {/* blurred artwork background */}
-
-            {song.thumbnail && (
-              <>
-                <img
-                  src={song.thumbnail}
-                  alt=""
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-[0.13] blur-3xl"
-                />
-                <div className="pointer-events-none absolute inset-0 bg-white/60" />
-              </>
-            )}
-
-            <div className="relative">
-              {/* MEDIA INFO */}
-
-              <div className="flex flex-col gap-6 sm:flex-row">
-                {/* ARTWORK */}
-
-                <div className="group relative mx-auto h-56 w-56 shrink-0 sm:mx-0">
-                  <div className="absolute -inset-2 rounded-[30px] bg-gradient-to-br from-red-300/20 via-pink-300/20 to-purple-300/20 blur-xl transition-opacity group-hover:opacity-100" />
-
-                  <div className="relative h-full w-full overflow-hidden rounded-[27px] bg-gradient-to-br from-red-100 via-pink-100 to-purple-100 shadow-[0_25px_60px_rgba(30,30,60,0.20)] ring-1 ring-white">
-                    {song.thumbnail ? (
-                      <img
-                        src={song.thumbnail}
-                        alt={`${t("coverArt")}: ${song.title}`}
-                        className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.04]"
-                        onError={(event) => {
-                          event.currentTarget.style.display = "none";
-                        }}
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-pink-400">
-                        <MusicIcon size={58} />
-                      </div>
-                    )}
-
-                    <div className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/30 to-transparent" />
-
-                    <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full border border-white/50 bg-black/25 px-3 py-1.5 text-[9px] font-black uppercase tracking-wider text-white backdrop-blur-xl">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
-                      YouTube
-                    </div>
-                  </div>
-                </div>
-
-                {/* INFO */}
-
-                <div className="flex min-w-0 flex-1 flex-col justify-center">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-pink-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.15em] text-pink-500">
-                      <SparkleIcon size={10} />
-                      {t("ready")}
-                    </span>
-
-                    <Visualizer active={!busy} />
-                  </div>
-
-                  <h2 className="line-clamp-3 text-[25px] font-black leading-[1.08] tracking-[-0.035em] text-slate-900 sm:text-3xl">
-                    {view.title}
-                  </h2>
-
-                  <p className="mt-2 text-base font-bold text-slate-600">{view.artist || t("unknownArtist")}</p>
-
-                  {loadingDetails ? (
-                    <p className="mt-3 flex items-center gap-2 text-xs font-medium text-slate-400">
-                      <Spinner className="h-3 w-3" />
-                      {t("lookingUp")}
-                    </p>
-                  ) : (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {view.album && (
-                        <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
-                          {view.album}
-                        </span>
-                      )}
-                      {view.year && (
-                        <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
-                          {view.year}
-                        </span>
-                      )}
-                      {song.duration > 0 && (
-                        <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
-                          {fmtDuration(song.duration)}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {view.composer && (
-                    <p className="mt-3 text-xs font-medium text-slate-400">
-                      {t("musicBy")} <span className="font-bold text-slate-500">{view.composer}</span>
-                    </p>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setEditing((v) => !v)}
-                    disabled={busy}
-                    className="mt-4 self-start rounded-full border border-white bg-white/70 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-slate-500 shadow-sm transition hover:border-pink-200 hover:text-pink-500 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {editing ? t("doneEditing") : t("editTags")}
-                  </button>
-                </div>
-              </div>
-
-              {/* DIVIDER */}
-
-              <div className="my-6 h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
-
-              {/* TAG EDITOR */}
-
-              {editing && (
-                <div className="mb-6 rounded-[22px] border border-white/80 bg-white/55 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <p className="text-sm font-black text-slate-800">{t("editTags")}</p>
-                    {Object.keys(edits).length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setEdits({})}
-                        disabled={busy}
-                        className="text-[11px] font-black text-pink-500 underline underline-offset-2"
-                      >
-                        {t("resetDetected")}
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {TAG_FIELDS.map((field) => (
-                      <label key={field.key} className={field.wide ? "sm:col-span-2" : ""}>
-                        <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
-                          {t(field.labelKey)}
-                        </span>
-                        <input
-                          value={edits[field.key] ?? song[field.key] ?? ""}
-                          onChange={(event) => setEdits((cur) => ({ ...cur, [field.key]: event.target.value }))}
-                          disabled={busy}
-                          maxLength={field.key === "year" ? 4 : 150}
-                          inputMode={field.key === "year" ? "numeric" : "text"}
-                          className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
-                        />
-                      </label>
-                    ))}
-                  </div>
-
-                  <p className="mt-3 text-[11px] font-medium text-slate-400">
-                    {t("editHint")}
-                  </p>
-                </div>
-              )}
-
-              {/* COVER ART + AUDIO OPTIONS */}
-
-              <div className="mb-5 grid gap-3">
-                <details className="rounded-[20px] border border-white/80 bg-white/50 px-4 py-3 open:bg-white/70">
-                  <summary className="cursor-pointer select-none text-sm font-black text-slate-800">
-                    {t("coverArt")}
-                    <span className="ml-2 text-[11px] font-medium text-slate-400">{t(COVER_LABEL[cover.source])}</span>
-                  </summary>
-
-                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <CoverTile
-                      active={cover.source === "auto"}
-                      disabled={busy}
-                      label={t("coverAuto")}
-                      sub={t("subBest")}
-                      img={song.thumbnail}
-                      onClick={() => setCover((c) => ({ ...c, source: "auto" }))}
-                    />
-
-                    <CoverTile
-                      active={cover.source === "apple"}
-                      disabled={busy || !song.appleCover}
-                      label="Apple Music"
-                      sub={song.appleCover ? t("subOfficial") : t("subNoMatch")}
-                      img={song.appleCover}
-                      onClick={() => setCover((c) => ({ ...c, source: "apple" }))}
-                    >
-                      <MusicIcon size={26} />
-                    </CoverTile>
-
-                    <CoverTile
-                      active={cover.source === "youtube"}
-                      disabled={busy || !song.videoId}
-                      label="YouTube"
-                      sub={t("subThumb")}
-                      img={song.videoId ? `https://i.ytimg.com/vi/${song.videoId}/hqdefault.jpg` : ""}
-                      onClick={() => setCover((c) => ({ ...c, source: "youtube" }))}
-                    >
-                      <MusicIcon size={26} />
-                    </CoverTile>
-
-                    <CoverTile
-                      active={cover.source === "custom"}
-                      disabled={busy || cover.uploading}
-                      label={cover.coverId ? t("coverCustom") : t("upload")}
-                      sub={cover.uploading ? t("uploading") : cover.coverId ? t("selected") : t("subTypes")}
-                      img={cover.preview}
-                      onClick={() =>
-                        cover.coverId ? setCover((c) => ({ ...c, source: "custom" })) : fileRef.current?.click()
-                      }
-                    >
-                      <span className="text-3xl font-light">+</span>
-                    </CoverTile>
+                  <div className="pointer-events-none absolute left-5 top-1/2 z-10 -translate-y-1/2 text-slate-400">
+                    <LinkIcon size={19} />
                   </div>
 
                   <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    className="sr-only"
-                    onChange={(event) => {
-                      uploadCover(event.target.files?.[0]);
-                      event.target.value = "";
-                    }}
+                    id="yt-url"
+                    type="url"
+                    inputMode="url"
+                    autoComplete="off"
+                    value={url}
+                    onChange={handleChange}
+                    onPaste={handlePaste}
+                    onKeyDown={(event) => event.key === "Enter" && findSong()}
+                    placeholder={t("placeholder")}
+                    className="h-[62px] w-full rounded-[22px] border border-white bg-white/80 pl-12 pr-24 text-sm font-semibold text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-pink-200 focus:bg-white"
                   />
 
-                  {cover.coverId && (
+                  <button
+                    type="button"
+                    onClick={pasteFromClipboard}
+                    disabled={busy}
+                    className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-full border border-slate-200/80 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide text-slate-500 shadow-sm transition hover:border-pink-200 hover:text-pink-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <PasteIcon size={13} />
+                    {t("paste")}
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => findSong()}
+                  disabled={loadingSong || busy}
+                  className={`group flex h-[62px] items-center justify-center gap-2 rounded-[22px] ${gradient} px-7 font-black text-white shadow-[0_12px_30px_rgba(236,72,153,0.24)] transition-all duration-300 hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[0_16px_36px_rgba(236,72,153,0.30)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {loadingSong ? (
+                    <>
+                      <Spinner />
+                      {t("finding")}
+                    </>
+                  ) : (
+                    <>
+                      {t("findSong")}
+                      <ArrowRightIcon
+                        size={17}
+                        className="transition-transform group-hover:translate-x-0.5"
+                      />
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {!song.title && !loadingSong && (
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                <FeaturePill>{t("pillCover")}</FeaturePill>
+                <FeaturePill>{t("pillTags")}</FeaturePill>
+                <FeaturePill>{t("pillQuality")}</FeaturePill>
+                <FeaturePill>{t("pillShorts")}</FeaturePill>
+              </div>
+            )}
+
+            {/* ERROR */}
+
+            <div aria-live="polite">
+              {error && (
+                <div
+                  role="alert"
+                  className="mt-4 flex items-start gap-3 rounded-[20px] border border-red-100 bg-red-50/80 px-4 py-3.5 text-sm font-medium text-red-600 shadow-sm"
+                >
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-100 font-black text-red-500">
+                    !
+                  </span>
+
+                  <span className="flex-1 leading-6">{error}</span>
+
+                  {song.title && !busy && (
                     <button
-                      type="button"
-                      onClick={() => fileRef.current?.click()}
-                      disabled={busy || cover.uploading}
-                      className="mt-3 text-[11px] font-black text-pink-500 underline underline-offset-2"
+                      onClick={startDownload}
+                      className="shrink-0 font-black text-red-700 underline underline-offset-2"
                     >
-                      {t("replaceImage")}
+                      {t("tryAgain")}
                     </button>
                   )}
-
-                  {cover.error && (
-                    <p role="alert" className="mt-3 text-[11px] font-semibold text-red-500">
-                      {cover.error}
-                    </p>
-                  )}
-                </details>
-
-                <details className="rounded-[20px] border border-white/80 bg-white/50 px-4 py-3 open:bg-white/70">
-                  <summary className="cursor-pointer select-none text-sm font-black text-slate-800">
-                    {t("audioOptions")}
-                    <span className="ml-2 text-[11px] font-medium text-slate-400">{audioSummary}</span>
-                  </summary>
-
-                  <div className="mt-3 space-y-3">
-                    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-white bg-white/70 px-3.5 py-3">
-                      <span>
-                        <span className="block text-sm font-bold text-slate-700">{t("evenVolume")}</span>
-                        <span className="block text-[11px] font-medium text-slate-400">
-                          {t("evenVolumeHint")}
-                        </span>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={audio.normalize}
-                        onChange={(event) => setAudio((a) => ({ ...a, normalize: event.target.checked }))}
-                        disabled={busy}
-                        className="h-5 w-5 shrink-0 accent-pink-500"
-                      />
-                    </label>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <label>
-                        <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
-                          {t("startAt")}
-                        </span>
-                        <input
-                          value={audio.start}
-                          onChange={(event) => setAudio((a) => ({ ...a, start: event.target.value }))}
-                          disabled={busy}
-                          placeholder="0:00"
-                          inputMode="numeric"
-                          className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
-                        />
-                      </label>
-
-                      <label>
-                        <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
-                          {t("endAt")}
-                        </span>
-                        <input
-                          value={audio.end}
-                          onChange={(event) => setAudio((a) => ({ ...a, end: event.target.value }))}
-                          disabled={busy}
-                          placeholder={song.duration ? fmtDuration(song.duration) : "end"}
-                          inputMode="numeric"
-                          className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
-                        />
-                      </label>
-                    </div>
-
-                    <p className="text-[11px] font-medium text-slate-400">
-                      {t("trimHint")}
-                    </p>
-                  </div>
-                </details>
-              </div>
-
-              {/* QUALITY */}
-
-              <fieldset disabled={busy}>
-                <div className="mb-3 flex items-end justify-between gap-3">
-                  <div>
-                    <legend className="text-sm font-black text-slate-800">{t("audioQuality")}</legend>
-                    <p className="mt-1 text-[11px] font-medium text-slate-400">
-                      {t("qualityHint")}
-                    </p>
-                  </div>
-
-                  <span className="hidden rounded-full border border-white bg-white/60 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-400 sm:block">
-                    MP3
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {QUALITIES.map((item) => (
-                    <QualityCard
-                      key={item.value}
-                      quality={item}
-                      active={quality === item.value}
-                      busy={busy}
-                      onChange={setQuality}
-                    />
-                  ))}
-                </div>
-              </fieldset>
-
-              {/* PROGRESS */}
-
-              {busy && (
-                <div className={`${glass} pulse-glow relative mt-5 rounded-[25px] bg-white/55 p-5`} aria-live="polite">
-                  <Stepper currentStep={step} />
-
-                  <div className="mt-5">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-pink-100 text-pink-500">
-                          <Spinner className="h-3.5 w-3.5" />
-                        </span>
-
-                        <span className="text-xs font-black text-slate-700">
-                          {phase === "preparing" ? t("preparing") : t("converting")}
-                        </span>
-                      </div>
-
-                      {phase !== "preparing" && (
-                        <span className="text-sm font-black text-pink-500">{Math.round(safeBarPct)}%</span>
-                      )}
-                    </div>
-
-                    <div
-                      className="h-2.5 overflow-hidden rounded-full bg-slate-200/70"
-                      role="progressbar"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={Math.round(safeBarPct)}
-                    >
-                      {phase === "preparing" ? (
-                        <div
-                          className={`h-full w-1/3 rounded-full ${gradient}`}
-                          style={{ animation: "shimmer 1.5s linear infinite", backgroundSize: "200% 100%" }}
-                        />
-                      ) : (
-                        <div
-                          className="shimmer h-full rounded-full bg-gradient-to-r from-red-500 via-pink-400 to-purple-500 transition-all duration-500"
-                          style={{ width: `${safeBarPct}%` }}
-                        />
-                      )}
-                    </div>
-
-                    <div className="mt-3 flex items-center justify-between gap-3">
-                      <p className="min-w-0 text-[11px] font-medium leading-5 text-slate-400">{statusText}</p>
-
-                      <button
-                        onClick={cancelDownload}
-                        className="shrink-0 rounded-full border border-white bg-white/70 px-3 py-1.5 text-[10px] font-black text-slate-500 transition hover:border-red-200 hover:text-red-500"
-                      >
-                        {t("cancel")}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* DOWNLOAD BUTTON */}
-
-              {!busy && !done && (
-                <button
-                  onClick={startDownload}
-                  className={`group relative mt-5 flex h-[62px] w-full items-center justify-center gap-3 overflow-hidden rounded-[22px] ${gradient} font-black text-white shadow-[0_18px_40px_rgba(236,72,153,0.25)] transition-all duration-300 hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[0_22px_48px_rgba(236,72,153,0.30)] active:translate-y-0`}
-                >
-                  <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-
-                  <span className="relative flex items-center gap-3">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15">
-                      <DownloadIcon size={19} />
-                    </span>
-                    {t("downloadMp3")}
-                    <ArrowRightIcon size={17} className="transition-transform group-hover:translate-x-1" />
-                  </span>
-                </button>
-              )}
-
-              {/* DONE */}
-
-              {done && !busy && file && (
-                <div className="relative mt-5">
-                  <div className="overflow-hidden rounded-[24px] border border-emerald-100 bg-gradient-to-br from-emerald-50/90 via-white/70 to-teal-50/70 p-5 text-center">
-                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/20">
-                      <CheckIcon size={24} />
-                    </div>
-
-                    <p className="mt-3 text-base font-black text-emerald-700">{t("mp3Ready")}</p>
-
-                    <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-emerald-600/75">
-                      {t("readyHelp")}
-                    </p>
-                  </div>
-
-                  <a
-                    href={file.url}
-                    className={`mt-3 flex h-[58px] w-full items-center justify-center gap-2 rounded-[20px] ${gradient} font-black text-white shadow-[0_18px_40px_rgba(236,72,153,0.25)] transition hover:brightness-110`}
-                  >
-                    <DownloadIcon size={19} />
-                    {t("saveMp3")}
-                  </a>
-
-                  <button
-                    onClick={reset}
-                    className="mt-3 w-full rounded-[17px] bg-slate-900 py-3.5 text-sm font-black text-white shadow-lg shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-slate-800"
-                  >
-                    {t("convertAnother")}
-                  </button>
                 </div>
               )}
             </div>
           </section>
-        )}
 
-        {/* FOOTER */}
+          {loadingSong && !song.title && <SongSkeleton />}
 
-        <div className="mx-auto mt-10 flex max-w-3xl flex-col items-center justify-center gap-3 text-center sm:flex-row">
-          <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
-            <span className="h-px w-8 bg-slate-200" />
-            <span className="font-medium tracking-wide">{t("footer")}</span>
-            <span className="h-px w-8 bg-slate-200" />
+          {/* SONG CARD */}
+
+          {song.title && (
+            <section
+              className={`${glass} rise relative mx-auto mt-8 max-w-3xl overflow-hidden rounded-[34px] p-4 sm:p-6`}
+            >
+              {/* blurred artwork background */}
+
+              {song.thumbnail && (
+                <>
+                  <img
+                    src={song.thumbnail}
+                    alt=""
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-[0.13] blur-3xl"
+                  />
+                  <div className="pointer-events-none absolute inset-0 bg-white/60" />
+                </>
+              )}
+
+              <div className="relative">
+                {/* MEDIA INFO */}
+
+                <div className="flex flex-col gap-6 sm:flex-row">
+                  {/* ARTWORK */}
+
+                  <div className="group relative mx-auto h-56 w-56 shrink-0 sm:mx-0">
+                    <div className="absolute -inset-2 rounded-[30px] bg-gradient-to-br from-red-300/20 via-pink-300/20 to-purple-300/20 blur-xl transition-opacity group-hover:opacity-100" />
+
+                    <div className="relative h-full w-full overflow-hidden rounded-[27px] bg-gradient-to-br from-red-100 via-pink-100 to-purple-100 shadow-[0_25px_60px_rgba(30,30,60,0.20)] ring-1 ring-white">
+                      {song.thumbnail ? (
+                        <img
+                          src={song.thumbnail}
+                          alt={`${t("coverArt")}: ${song.title}`}
+                          className="h-full w-full object-cover transition duration-700 group-hover:scale-[1.04]"
+                          onError={(event) => {
+                            event.currentTarget.style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-pink-400">
+                          <MusicIcon size={58} />
+                        </div>
+                      )}
+
+                      <div className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/30 to-transparent" />
+
+                      <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full border border-white/50 bg-black/25 px-3 py-1.5 text-[9px] font-black uppercase tracking-wider text-white backdrop-blur-xl">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                        YouTube
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* INFO */}
+
+                  <div className="flex min-w-0 flex-1 flex-col justify-center">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-pink-50 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.15em] text-pink-500">
+                        <SparkleIcon size={10} />
+                        {t("ready")}
+                      </span>
+
+                      <Visualizer active={!busy} />
+                    </div>
+
+                    <h2 className="line-clamp-3 text-[25px] font-black leading-[1.08] tracking-[-0.035em] text-slate-900 sm:text-3xl">
+                      {view.title}
+                    </h2>
+
+                    <p className="mt-2 text-base font-bold text-slate-600">
+                      {view.artist || t("unknownArtist")}
+                    </p>
+
+                    {loadingDetails ? (
+                      <p className="mt-3 flex items-center gap-2 text-xs font-medium text-slate-400">
+                        <Spinner className="h-3 w-3" />
+                        {t("lookingUp")}
+                      </p>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {view.album && (
+                          <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
+                            {view.album}
+                          </span>
+                        )}
+                        {view.year && (
+                          <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
+                            {view.year}
+                          </span>
+                        )}
+                        {song.duration > 0 && (
+                          <span className="rounded-full border border-white bg-white/70 px-2.5 py-1 text-[10px] font-bold text-slate-500">
+                            {fmtDuration(song.duration)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {view.composer && (
+                      <p className="mt-3 text-xs font-medium text-slate-400">
+                        {t("musicBy")}{" "}
+                        <span className="font-bold text-slate-500">
+                          {view.composer}
+                        </span>
+                      </p>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setEditing((v) => !v)}
+                      disabled={busy}
+                      className="mt-4 self-start rounded-full border border-white bg-white/70 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-slate-500 shadow-sm transition hover:border-pink-200 hover:text-pink-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {editing ? t("doneEditing") : t("editTags")}
+                    </button>
+                  </div>
+                </div>
+
+                {/* DIVIDER */}
+
+                <div className="my-6 h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
+
+                {/* TAG EDITOR */}
+
+                {editing && (
+                  <div className="mb-6 rounded-[22px] border border-white/80 bg-white/55 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <p className="text-sm font-black text-slate-800">
+                        {t("editTags")}
+                      </p>
+                      {Object.keys(edits).length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setEdits({})}
+                          disabled={busy}
+                          className="text-[11px] font-black text-pink-500 underline underline-offset-2"
+                        >
+                          {t("resetDetected")}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {TAG_FIELDS.map((field) => (
+                        <label
+                          key={field.key}
+                          className={field.wide ? "sm:col-span-2" : ""}
+                        >
+                          <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            {t(field.labelKey)}
+                          </span>
+                          <input
+                            value={edits[field.key] ?? song[field.key] ?? ""}
+                            onChange={(event) =>
+                              setEdits((cur) => ({
+                                ...cur,
+                                [field.key]: event.target.value,
+                              }))
+                            }
+                            disabled={busy}
+                            maxLength={field.key === "year" ? 4 : 150}
+                            inputMode={
+                              field.key === "year" ? "numeric" : "text"
+                            }
+                            className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
+                          />
+                        </label>
+                      ))}
+                    </div>
+
+                    <p className="mt-3 text-[11px] font-medium text-slate-400">
+                      {t("editHint")}
+                    </p>
+                  </div>
+                )}
+
+                {/* COVER ART + AUDIO OPTIONS */}
+
+                <div className="mb-5 grid gap-3">
+                  <details className="rounded-[20px] border border-white/80 bg-white/50 px-4 py-3 open:bg-white/70">
+                    <summary className="cursor-pointer select-none text-sm font-black text-slate-800">
+                      {t("coverArt")}
+                      <span className="ml-2 text-[11px] font-medium text-slate-400">
+                        {t(COVER_LABEL[cover.source])}
+                      </span>
+                    </summary>
+
+                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <CoverTile
+                        active={cover.source === "auto"}
+                        disabled={busy}
+                        label={t("coverAuto")}
+                        sub={t("subBest")}
+                        img={song.thumbnail}
+                        onClick={() =>
+                          setCover((c) => ({ ...c, source: "auto" }))
+                        }
+                      />
+
+                      <CoverTile
+                        active={cover.source === "apple"}
+                        disabled={busy || !song.appleCover}
+                        label="Apple Music"
+                        sub={
+                          song.appleCover ? t("subOfficial") : t("subNoMatch")
+                        }
+                        img={song.appleCover}
+                        onClick={() =>
+                          setCover((c) => ({ ...c, source: "apple" }))
+                        }
+                      >
+                        <MusicIcon size={26} />
+                      </CoverTile>
+
+                      <CoverTile
+                        active={cover.source === "youtube"}
+                        disabled={busy || !song.videoId}
+                        label="YouTube"
+                        sub={t("subThumb")}
+                        img={
+                          song.videoId
+                            ? `https://i.ytimg.com/vi/${song.videoId}/hqdefault.jpg`
+                            : ""
+                        }
+                        onClick={() =>
+                          setCover((c) => ({ ...c, source: "youtube" }))
+                        }
+                      >
+                        <MusicIcon size={26} />
+                      </CoverTile>
+
+                      <CoverTile
+                        active={cover.source === "custom"}
+                        disabled={busy || cover.uploading}
+                        label={cover.coverId ? t("coverCustom") : t("upload")}
+                        sub={
+                          cover.uploading
+                            ? t("uploading")
+                            : cover.coverId
+                              ? t("selected")
+                              : t("subTypes")
+                        }
+                        img={cover.preview}
+                        onClick={() =>
+                          cover.coverId
+                            ? setCover((c) => ({ ...c, source: "custom" }))
+                            : fileRef.current?.click()
+                        }
+                      >
+                        <span className="text-3xl font-light">+</span>
+                      </CoverTile>
+                    </div>
+
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      onChange={(event) => {
+                        uploadCover(event.target.files?.[0]);
+                        event.target.value = "";
+                      }}
+                    />
+
+                    {cover.coverId && (
+                      <button
+                        type="button"
+                        onClick={() => fileRef.current?.click()}
+                        disabled={busy || cover.uploading}
+                        className="mt-3 text-[11px] font-black text-pink-500 underline underline-offset-2"
+                      >
+                        {t("replaceImage")}
+                      </button>
+                    )}
+
+                    {cover.error && (
+                      <p
+                        role="alert"
+                        className="mt-3 text-[11px] font-semibold text-red-500"
+                      >
+                        {cover.error}
+                      </p>
+                    )}
+                  </details>
+
+                  <details className="rounded-[20px] border border-white/80 bg-white/50 px-4 py-3 open:bg-white/70">
+                    <summary className="cursor-pointer select-none text-sm font-black text-slate-800">
+                      {t("audioOptions")}
+                      <span className="ml-2 text-[11px] font-medium text-slate-400">
+                        {audioSummary}
+                      </span>
+                    </summary>
+
+                    <div className="mt-3 space-y-3">
+                      <label className="flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-white bg-white/70 px-3.5 py-3">
+                        <span>
+                          <span className="block text-sm font-bold text-slate-700">
+                            {t("evenVolume")}
+                          </span>
+                          <span className="block text-[11px] font-medium text-slate-400">
+                            {t("evenVolumeHint")}
+                          </span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={audio.normalize}
+                          onChange={(event) =>
+                            setAudio((a) => ({
+                              ...a,
+                              normalize: event.target.checked,
+                            }))
+                          }
+                          disabled={busy}
+                          className="h-5 w-5 shrink-0 accent-pink-500"
+                        />
+                      </label>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <label>
+                          <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            {t("startAt")}
+                          </span>
+                          <input
+                            value={audio.start}
+                            onChange={(event) =>
+                              setAudio((a) => ({
+                                ...a,
+                                start: event.target.value,
+                              }))
+                            }
+                            disabled={busy}
+                            placeholder="0:00"
+                            inputMode="numeric"
+                            className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
+                          />
+                        </label>
+
+                        <label>
+                          <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            {t("endAt")}
+                          </span>
+                          <input
+                            value={audio.end}
+                            onChange={(event) =>
+                              setAudio((a) => ({
+                                ...a,
+                                end: event.target.value,
+                              }))
+                            }
+                            disabled={busy}
+                            placeholder={
+                              song.duration ? fmtDuration(song.duration) : "end"
+                            }
+                            inputMode="numeric"
+                            className="h-11 w-full rounded-2xl border border-white bg-white/80 px-3.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-pink-200 focus:bg-white disabled:opacity-60"
+                          />
+                        </label>
+                      </div>
+
+                      <p className="text-[11px] font-medium text-slate-400">
+                        {t("trimHint")}
+                      </p>
+                    </div>
+                  </details>
+                </div>
+
+                {/* QUALITY */}
+
+                <fieldset disabled={busy}>
+                  <div className="mb-3 flex items-end justify-between gap-3">
+                    <div>
+                      <legend className="text-sm font-black text-slate-800">
+                        {t("audioQuality")}
+                      </legend>
+                      <p className="mt-1 text-[11px] font-medium text-slate-400">
+                        {t("qualityHint")}
+                      </p>
+                    </div>
+
+                    <span className="hidden rounded-full border border-white bg-white/60 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-400 sm:block">
+                      MP3
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {QUALITIES.map((item) => (
+                      <QualityCard
+                        key={item.value}
+                        quality={item}
+                        active={quality === item.value}
+                        busy={busy}
+                        onChange={setQuality}
+                      />
+                    ))}
+                  </div>
+                </fieldset>
+
+                {/* PROGRESS */}
+
+                {busy && (
+                  <div
+                    className={`${glass} pulse-glow relative mt-5 rounded-[25px] bg-white/55 p-5`}
+                    aria-live="polite"
+                  >
+                    <Stepper currentStep={step} />
+
+                    <div className="mt-5">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-pink-100 text-pink-500">
+                            <Spinner className="h-3.5 w-3.5" />
+                          </span>
+
+                          <span className="text-xs font-black text-slate-700">
+                            {phase === "preparing"
+                              ? t("preparing")
+                              : t("converting")}
+                          </span>
+                        </div>
+
+                        {phase !== "preparing" && (
+                          <span className="text-sm font-black text-pink-500">
+                            {Math.round(safeBarPct)}%
+                          </span>
+                        )}
+                      </div>
+
+                      <div
+                        className="h-2.5 overflow-hidden rounded-full bg-slate-200/70"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(safeBarPct)}
+                      >
+                        {phase === "preparing" ? (
+                          <div
+                            className={`h-full w-1/3 rounded-full ${gradient}`}
+                            style={{
+                              animation: "shimmer 1.5s linear infinite",
+                              backgroundSize: "200% 100%",
+                            }}
+                          />
+                        ) : (
+                          <div
+                            className="shimmer h-full rounded-full bg-gradient-to-r from-red-500 via-pink-400 to-purple-500 transition-all duration-500"
+                            style={{ width: `${safeBarPct}%` }}
+                          />
+                        )}
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <p className="min-w-0 text-[11px] font-medium leading-5 text-slate-400">
+                          {statusText}
+                        </p>
+
+                        <button
+                          onClick={cancelDownload}
+                          className="shrink-0 rounded-full border border-white bg-white/70 px-3 py-1.5 text-[10px] font-black text-slate-500 transition hover:border-red-200 hover:text-red-500"
+                        >
+                          {t("cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* DOWNLOAD BUTTON */}
+
+                {!busy && !done && (
+                  <button
+                    onClick={startDownload}
+                    className={`group relative mt-5 flex h-[62px] w-full items-center justify-center gap-3 overflow-hidden rounded-[22px] ${gradient} font-black text-white shadow-[0_18px_40px_rgba(236,72,153,0.25)] transition-all duration-300 hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[0_22px_48px_rgba(236,72,153,0.30)] active:translate-y-0`}
+                  >
+                    <span className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+
+                    <span className="relative flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15">
+                        <DownloadIcon size={19} />
+                      </span>
+                      {t("downloadMp3")}
+                      <ArrowRightIcon
+                        size={17}
+                        className="transition-transform group-hover:translate-x-1"
+                      />
+                    </span>
+                  </button>
+                )}
+
+                {/* DONE */}
+
+                {done && !busy && file && (
+                  <div className="relative mt-5">
+                    <div className="overflow-hidden rounded-[24px] border border-emerald-100 bg-gradient-to-br from-emerald-50/90 via-white/70 to-teal-50/70 p-5 text-center">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/20">
+                        <CheckIcon size={24} />
+                      </div>
+
+                      <p className="mt-3 text-base font-black text-emerald-700">
+                        {t("mp3Ready")}
+                      </p>
+
+                      <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-emerald-600/75">
+                        {t("readyHelp")}
+                      </p>
+                    </div>
+
+                    <a
+                      href={file.url}
+                      className={`mt-3 flex h-[58px] w-full items-center justify-center gap-2 rounded-[20px] ${gradient} font-black text-white shadow-[0_18px_40px_rgba(236,72,153,0.25)] transition hover:brightness-110`}
+                    >
+                      <DownloadIcon size={19} />
+                      {t("saveMp3")}
+                    </a>
+
+                    <button
+                      onClick={reset}
+                      className="mt-3 w-full rounded-[17px] bg-slate-900 py-3.5 text-sm font-black text-white shadow-lg shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-slate-800"
+                    >
+                      {t("convertAnother")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* FOOTER */}
+
+          <div className="mx-auto mt-10 flex max-w-3xl flex-col items-center justify-center gap-3 text-center sm:flex-row">
+            <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
+              <span className="h-px w-8 bg-slate-200" />
+              <span className="font-medium tracking-wide">{t("footer")}</span>
+              <span className="h-px w-8 bg-slate-200" />
+            </div>
           </div>
-        </div>
-      </main>
-    </div>
+        </main>
+      </div>
     </I18nContext.Provider>
   );
 }
